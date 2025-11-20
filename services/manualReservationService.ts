@@ -13,10 +13,10 @@ export interface ClientValidationResponse {
     telefone?: string;
     ddd?: string;
     empresa_id?: number;
-    // outros campos que a function retornar
     [key: string]: any; 
   };
   error?: string;
+  suggestAnonymous?: boolean; // Flag para sugerir reserva anônima
 }
 
 export const manualReservationService = {
@@ -27,52 +27,64 @@ export const manualReservationService = {
     try {
       console.log('🚀 [ManualReserva] Validando cliente:', { ddd, telefone, empresaId });
       
+      const payload = {
+        ddd,
+        telefone,
+        empresa_id: empresaId
+      };
+      
+      console.log('📤 [ManualReserva] Payload enviado:', payload);
+      
       const response = await fetch(VALIDATE_CLIENT_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
         },
-        body: JSON.stringify({
-          ddd,
-          telefone,
-          empresa_id: empresaId
-        }),
+        body: JSON.stringify(payload),
       });
 
       console.log('📡 [ManualReserva] Status HTTP:', response.status);
+      console.log('📡 [ManualReserva] Headers:', Object.fromEntries(response.headers.entries()));
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('❌ [ManualReserva] Erro na requisição:', errorText);
+      const result = await response.json();
+      console.log('✅ [ManualReserva] Resposta JSON completa:', JSON.stringify(result, null, 2));
+
+      // CASO 1: Erro explícito (success: false ou campo error)
+      if (result.success === false || result.error) {
+        const errorMsg = result.error || 'Cliente não encontrado.';
+        console.warn('⚠️ [ManualReserva] Cliente não encontrado:', errorMsg);
+        
+        // Se for erro de formato, sugerir reserva anônima
+        const isFormatError = errorMsg.includes('Formato') || errorMsg.includes('inválido');
+        
         return {
           success: false,
-          error: `Erro HTTP: ${response.status}`
+          error: errorMsg,
+          suggestAnonymous: isFormatError
         };
       }
 
-      const result = await response.json();
-      console.log('✅ [ManualReserva] Resposta JSON:', result);
-
-      // Verifica se houve erro explícito no corpo da resposta
-      if (result.success === false || result.error) {
-         return {
-           success: false,
-           error: result.error || 'Cliente não encontrado.'
-         };
+      // CASO 2: Cliente encontrado (resposta tem uuid_identificador ou outros campos do cliente)
+      // Baseado no exemplo do usuário, quando encontra vem um objeto com uuid_identificador, etc.
+      if (result.uuid_identificador || result.id || result.nome) {
+        console.log('✅ [ManualReserva] Cliente encontrado!', result);
+        return {
+          success: true,
+          data: result
+        };
       }
 
-      // Se a resposta não tem um campo "success" explícito mas retornou dados (como o exemplo do usuário sugere),
-      // consideramos sucesso. O exemplo de sucesso era: { "ddd": "...", "telefone": "...", "empresa_id": ... }
-      // Vamos assumir que isso é o objeto do cliente.
-      
+      // CASO 3: Resposta inesperada
+      console.warn('⚠️ [ManualReserva] Resposta não reconhecida:', result);
       return {
-        success: true,
-        data: result
+        success: false,
+        error: 'Resposta inesperada do servidor.'
       };
 
     } catch (error: any) {
       console.error('❌ [ManualReserva] Exceção ao validar cliente:', error);
+      console.error('❌ [ManualReserva] Stack:', error.stack);
       return {
         success: false,
         error: 'Erro de conexão com o servidor.'
@@ -104,7 +116,6 @@ export const manualReservationService = {
         confirmada_dia_reserva: true,
         origem: 'manual',
         cliente_id: payload.cliente_id || null,
-        // cliente_uuid: payload.cliente_uuid || null // Descomentar se a coluna existir
       })
       .select()
       .single();
@@ -138,7 +149,6 @@ export const manualReservationService = {
 
     console.log('✅ [ManualReserva] Resultado RPC:', data);
     
-    // Se o RPC retornar algo que indique sucesso (ex: 200 ou true)
     return true;
   }
 };

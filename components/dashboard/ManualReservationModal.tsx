@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useForm } from 'react-hook-form';
 import { 
   X, Search, User, Calendar, Clock, Users, 
-  MessageSquare, Loader2, CheckCircle2, AlertTriangle, Phone 
+  MessageSquare, Loader2, CheckCircle2, AlertTriangle, Phone, Info
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { manualReservationService } from '../../services/manualReservationService';
@@ -25,6 +25,7 @@ export const ManualReservationModal = ({ isOpen, onClose, onSuccess }: ManualRes
   const [clientData, setClientData] = useState<any>(null);
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const [searchError, setSearchError] = useState("");
+  const [suggestAnonymous, setSuggestAnonymous] = useState(false);
 
   // Form da Busca
   const [searchPhone, setSearchPhone] = useState({ ddd: '', number: '' });
@@ -35,7 +36,10 @@ export const ManualReservationModal = ({ isOpen, onClose, onSuccess }: ManualRes
   if (!isOpen) return null;
 
   const handleSearchClient = async (e?: React.MouseEvent) => {
-    if (e) e.preventDefault(); // Prevenir submit se houver form
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     
     console.log("🖱️ [ManualReserva] Botão Buscar Cliente clicado!");
     console.log("📊 [ManualReserva] Estado atual:", { 
@@ -44,20 +48,37 @@ export const ManualReservationModal = ({ isOpen, onClose, onSuccess }: ManualRes
         empresaId: authUser?.empresa?.id 
     });
 
+    // Validação básica
     if (!searchPhone.ddd || !searchPhone.number) {
       console.warn("⚠️ [ManualReserva] Campos incompletos");
       setSearchError("Preencha DDD e Telefone.");
+      setSuggestAnonymous(false);
       return;
     }
 
     if (!authUser?.empresa.id) {
       console.error("❌ [ManualReserva] ID da empresa não encontrado no contexto de auth");
       setSearchError("Erro: Empresa não identificada no sistema. Tente recarregar.");
+      setSuggestAnonymous(false);
+      return;
+    }
+
+    // Validação de formato básica
+    if (searchPhone.ddd.length !== 2) {
+      setSearchError("DDD deve ter 2 dígitos.");
+      setSuggestAnonymous(false);
+      return;
+    }
+
+    if (searchPhone.number.length < 8 || searchPhone.number.length > 9) {
+      setSearchError("Telefone deve ter 8 ou 9 dígitos.");
+      setSuggestAnonymous(true);
       return;
     }
 
     setIsLoading(true);
     setSearchError("");
+    setSuggestAnonymous(false);
 
     try {
       console.log("🚀 [ManualReserva] Iniciando chamada ao serviço...");
@@ -70,17 +91,24 @@ export const ManualReservationModal = ({ isOpen, onClose, onSuccess }: ManualRes
       console.log("✅ [ManualReserva] Retorno do serviço:", response);
 
       if (response.success && response.data) {
+        console.log("✅ [ManualReserva] Cliente encontrado! Dados:", response.data);
         setClientData(response.data);
         // Pre-fill name if available
-        if (response.data.nome) setValue('nome', response.data.nome);
+        if (response.data.nome) {
+          setValue('nome', response.data.nome);
+        }
         setValue('telefone', `${searchPhone.ddd}${searchPhone.number}`);
         setStep('form');
+        setSuggestAnonymous(false);
       } else {
+        console.warn("⚠️ [ManualReserva] Cliente não encontrado:", response.error);
         setSearchError(response.error || "Cliente não encontrado.");
+        setSuggestAnonymous(response.suggestAnonymous || false);
       }
     } catch (err) {
       console.error("❌ [ManualReserva] Erro no catch:", err);
-      setSearchError("Erro ao buscar cliente.");
+      setSearchError("Erro ao buscar cliente. Tente novamente.");
+      setSuggestAnonymous(true);
     } finally {
       setIsLoading(false);
     }
@@ -111,7 +139,7 @@ export const ManualReservationModal = ({ isOpen, onClose, onSuccess }: ManualRes
       // 2. Enviar Mensagem (se não for anônima)
       let messageStatus = "Reserva criada com sucesso.";
       
-      if (!isAnonymous && newReservation?.id) {
+      if (!isAnonymous && newReservation?.id && clientData) {
          const messageSent = await manualReservationService.triggerConfirmationMessage(newReservation.id);
          if (messageSent) {
             messageStatus = "Reserva feita e mensagem enviada ao cliente.";
@@ -140,6 +168,7 @@ export const ManualReservationModal = ({ isOpen, onClose, onSuccess }: ManualRes
     setClientData(null);
     setSearchPhone({ ddd: '', number: '' });
     setSearchError("");
+    setSuggestAnonymous(false);
     onClose();
   };
 
@@ -150,6 +179,7 @@ export const ManualReservationModal = ({ isOpen, onClose, onSuccess }: ManualRes
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.95, opacity: 0 }}
         className="bg-deep border border-gray-700 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+        onClick={(e) => e.stopPropagation()} // Prevenir fechamento ao clicar dentro
       >
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-700 flex justify-between items-center bg-white/5">
@@ -182,6 +212,13 @@ export const ManualReservationModal = ({ isOpen, onClose, onSuccess }: ManualRes
                       onChange={(e) => {
                         const val = e.target.value.replace(/\D/g,'');
                         setSearchPhone(prev => ({...prev, ddd: val}));
+                        setSearchError(""); // Limpar erro ao digitar
+                      }}
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleSearchClient();
+                        }
                       }}
                       className="w-full bg-deep border border-gray-600 rounded-lg p-3 text-white text-center focus:border-electric outline-none"
                     />
@@ -194,6 +231,13 @@ export const ManualReservationModal = ({ isOpen, onClose, onSuccess }: ManualRes
                       onChange={(e) => {
                         const val = e.target.value.replace(/\D/g,'');
                         setSearchPhone(prev => ({...prev, number: val}));
+                        setSearchError(""); // Limpar erro ao digitar
+                      }}
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleSearchClient();
+                        }
                       }}
                       className="w-full bg-deep border border-gray-600 rounded-lg p-3 text-white focus:border-electric outline-none"
                     />
@@ -201,18 +245,47 @@ export const ManualReservationModal = ({ isOpen, onClose, onSuccess }: ManualRes
                 </div>
                 
                 {searchError && (
-                  <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center gap-2 text-red-400 text-sm">
-                    <AlertTriangle size={16} /> {searchError}
+                  <div className={`mt-4 p-3 rounded-lg flex items-start gap-2 text-sm ${
+                    suggestAnonymous 
+                      ? 'bg-yellow-500/10 border border-yellow-500/20 text-yellow-400' 
+                      : 'bg-red-500/10 border border-red-500/20 text-red-400'
+                  }`}>
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" /> 
+                    <div className="flex-1">
+                      <p>{searchError}</p>
+                      {suggestAnonymous && (
+                        <button
+                          onClick={handleSkipSearch}
+                          className="mt-2 text-xs underline font-bold hover:text-yellow-300"
+                        >
+                          Ou criar reserva anônima →
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
 
                 <button 
                   type="button"
-                  onClick={handleSearchClient}
-                  disabled={isLoading}
-                  className="w-full mt-6 bg-electric hover:bg-electric/90 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleSearchClient(e);
+                  }}
+                  disabled={isLoading || !searchPhone.ddd || !searchPhone.number}
+                  className="w-full mt-6 bg-electric hover:bg-electric/90 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {isLoading ? <Loader2 className="animate-spin" /> : 'Buscar Cliente'}
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="animate-spin" size={20} />
+                      <span>Buscando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Search size={20} />
+                      <span>Buscar Cliente</span>
+                    </>
+                  )}
                 </button>
               </div>
 
@@ -237,9 +310,9 @@ export const ManualReservationModal = ({ isOpen, onClose, onSuccess }: ManualRes
                 {!isAnonymous && clientData && (
                   <div className="flex items-center gap-3 p-3 bg-electric/10 border border-electric/20 rounded-xl mb-4">
                     <div className="w-10 h-10 rounded-full bg-electric text-white flex items-center justify-center font-bold">
-                      {clientData.nome ? clientData.nome.charAt(0) : <User size={20} />}
+                      {clientData.nome ? clientData.nome.charAt(0).toUpperCase() : <User size={20} />}
                     </div>
-                    <div>
+                    <div className="flex-1">
                       <p className="text-white font-bold text-sm">{clientData.nome || 'Cliente Identificado'}</p>
                       <p className="text-electric text-xs">{searchPhone.ddd} {searchPhone.number}</p>
                     </div>
