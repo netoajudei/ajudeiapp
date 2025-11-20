@@ -2,48 +2,265 @@
 "use client";
 
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import DashboardLayout from './DashboardLayout';
-import { reservationService, ExtendedReserva } from '../../services/reservationService';
+import { ConfirmReservationDialog } from './ConfirmReservationDialog';
+import { SuccessDialog } from './SuccessDialog';
+import { supabaseReservationService } from '../../services/supabaseReservationService';
+import { reservationApiService } from '../../services/reservationApiService';
+import { useAuth } from '@/contexts/AuthContext';
+import { useReservation } from '@/contexts/ReservationContext';
+import { Reserva } from '../../types';
 import { 
   Loader2, ArrowLeft, Phone, Calendar, Clock, Users, 
   MessageSquare, CheckCircle2, XCircle, MessageCircle, 
   Cake, MapPin
 } from 'lucide-react';
 
-const ReservationDetailsPage = () => {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
+interface ReservationDetailsPageProps {
+  reservationId: string;
+}
+
+// Tipo estendido para incluir campos do cliente
+interface ExtendedReserva extends Reserva {
+  telefone?: string;
+  data_nascimento?: string;
+  clientes?: {
+    nome?: string;
+    chatId?: string;
+    foto?: string;
+    aniversario?: boolean;
+    telefone?: string;
+    data_nascimento?: string;
+    uuid_identificador?: string;
+  };
+}
+
+const ReservationDetailsPage = ({ reservationId }: ReservationDetailsPageProps) => {
+  const router = useRouter();
+  const { authUser } = useAuth();
+  const { selectedReservation, setSelectedReservation } = useReservation();
   
   const [reserva, setReserva] = useState<ExtendedReserva | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [successDialogOpen, setSuccessDialogOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState<'confirmar' | 'cancelar' | null>(null);
 
-  useEffect(() => {
-    const load = async () => {
-      if (!id) return;
-      try {
-        const data = await reservationService.getReservaById(Number(id));
-        setReserva(data);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setIsLoading(false);
+  // Função helper para limpar chatId (remover @lid e @c.us)
+  const cleanChatId = (chatId: string | null | undefined): string => {
+    if (!chatId) return '';
+    return chatId.replace(/@lid|@c\.us/g, '').trim();
+  };
+
+  // Função para mapear dados do Supabase ou contexto para o formato esperado
+  const mapReservaFromSupabase = (reservaData: any): ExtendedReserva => {
+    const clientes = reservaData.clientes || {};
+    
+    // Se já tiver os dados mapeados (vindo do contexto), retornar direto
+    if (reservaData.status && reservaData.convidados !== undefined) {
+      return reservaData as ExtendedReserva;
+    }
+    
+    // Calcular convidados
+    const adultos = reservaData.adultos || 0;
+    const criancas = reservaData.criancas || 0;
+    const convidados = reservaData.convidados || (adultos + criancas);
+    
+    // Determinar status
+    let status: 'confirmada' | 'pendente' | 'cancelada' = 'pendente';
+    if (reservaData.cancelada_cliente) {
+      status = 'cancelada';
+    } else if (reservaData.confirmada_dia_reserva) {
+      status = 'confirmada';
+    }
+    
+    return {
+      id: reservaData.id,
+      empresa_id: reservaData.empresa_id,
+      nome: reservaData.nome || 'Cliente',
+      data_reserva: reservaData.data_reserva,
+      horario: reservaData.horario,
+      adultos: adultos,
+      criancas: criancas,
+      convidados: convidados,
+      observacoes: reservaData.observacoes,
+      aniversario: reservaData.aniversario || false,
+      confirmada_dia_reserva: reservaData.confirmada_dia_reserva || false,
+      mesa: reservaData.mesa,
+      status: status,
+      created_at: reservaData.created_at,
+      telefone: cleanChatId(clientes.chatId || reservaData.chat_id || reservaData.telefone), // Usar chatId do cliente ou chat_id da reserva ou telefone já mapeado (limpo)
+      data_nascimento: clientes.data_nascimento || reservaData.data_nascimento,
+      // Incluir dados completos do cliente incluindo uuid_identificador
+      clientes: {
+        ...clientes,
+        uuid_identificador: clientes.uuid_identificador || reservaData.clientes?.uuid_identificador
       }
     };
-    load();
-  }, [id]);
+  };
 
-  const handleStatusChange = async (status: 'confirmada' | 'cancelada') => {
-    if (!reserva) return;
-    if (!confirm(`Tem certeza que deseja ${status === 'confirmada' ? 'confirmar' : 'cancelar'} esta reserva?`)) return;
+  useEffect(() => {
+    console.log('🔄 [ReservationDetails] useEffect executado:', {
+      reservationId,
+      hasAuthUser: !!authUser,
+      empresaId: authUser?.empresa?.id,
+      hasSelectedReservation: !!selectedReservation,
+      selectedReservationId: selectedReservation?.id
+    });
+
+    const load = async () => {
+      if (!reservationId) {
+        console.error('❌ [ReservationDetails] reservationId não fornecido');
+        setIsLoading(false);
+        return;
+      }
+
+      // PRIMEIRO: Verificar se já temos os dados no contexto
+      if (selectedReservation && selectedReservation.id === Number(reservationId)) {
+        console.log('✅ [ReservationDetails] Usando dados do contexto (já temos tudo!)');
+        const reservaCompleta = mapReservaFromSupabase({
+          ...selectedReservation,
+          clientes: selectedReservation.clientes || {}
+        });
+        setReserva(reservaCompleta);
+        setIsLoading(false);
+        return;
+      }
+
+      // SEGUNDO: Se não tiver no contexto, buscar do Supabase
+      if (!authUser?.empresa.id) {
+        console.log('⏳ [ReservationDetails] Aguardando authUser estar disponível...');
+        setIsLoading(false);
+        return;
+      }
+
+      console.log('🔍 [ReservationDetails] Dados não estão no contexto, buscando do Supabase...');
+
+      try {
+        const empresaId = authUser.empresa.id;
+        const reservaIdNum = Number(reservationId);
+        
+        console.log('🔍 [ReservationDetails] Iniciando busca no Supabase:', {
+          reservationId,
+          reservaIdNum,
+          empresaId
+        });
+
+        const data = await supabaseReservationService.getReservaById(
+          empresaId,
+          reservaIdNum
+        );
+        
+        console.log('✅ [ReservationDetails] Dados recebidos do Supabase:', data);
+        
+        if (!data) {
+          console.error('❌ [ReservationDetails] Dados retornados são null/undefined');
+          setReserva(null);
+          return;
+        }
+
+        const reservaMapeada = mapReservaFromSupabase(data);
+        console.log('✅ [ReservationDetails] Reserva mapeada com sucesso:', reservaMapeada);
+        setReserva(reservaMapeada);
+        
+        // Salvar no contexto para próxima vez
+        setSelectedReservation(reservaMapeada as any);
+      } catch (e: any) {
+        console.error('❌ [ReservationDetails] Erro ao buscar reserva:', e);
+        console.error('❌ [ReservationDetails] Detalhes do erro:', {
+          message: e.message,
+          code: e.code,
+          details: e.details,
+          hint: e.hint,
+          stack: e.stack
+        });
+        setReserva(null);
+      } finally {
+        setIsLoading(false);
+        console.log('🏁 [ReservationDetails] Loading finalizado');
+      }
+    };
+    
+    load();
+  }, [reservationId, authUser, selectedReservation, setSelectedReservation]);
+
+  const handleStatusChangeClick = (status: 'confirmada' | 'cancelada') => {
+    const acao = status === 'confirmada' ? 'confirmar' : 'cancelar';
+    setPendingAction(acao);
+    setDialogOpen(true);
+  };
+
+  const handleConfirmAction = async () => {
+    if (!reserva || !authUser?.empresa.id || !pendingAction) return;
 
     setIsProcessing(true);
+    setDialogOpen(false);
+
     try {
-      await reservationService.updateStatus(reserva.id, status);
-      // Refresh data locally
-      setReserva(prev => prev ? { ...prev, status: status, confirmada_dia_reserva: status === 'confirmada' } : null);
+      // Obter uuid_identificador do cliente
+      const clienteUuid = reserva.clientes?.uuid_identificador;
+      
+      if (!clienteUuid) {
+        throw new Error('UUID do cliente não encontrado. Não é possível processar a ação.');
+      }
+
+      console.log('🔄 [ReservationDetails] Processando ação:', {
+        acao: pendingAction,
+        clienteUuid,
+        reservaId: reserva.id
+      });
+
+      // Chamar API externa
+      // Se confirmar -> "confirmar_dia_reserva"
+      // Se cancelar -> "cancelar"
+      const acaoApi = pendingAction === 'confirmar' ? 'confirmar_dia_reserva' : 'cancelar';
+
+      console.log('📤 [ReservationDetails] Enviando para API:', {
+        cliente_uuid: clienteUuid,
+        acao: acaoApi
+      });
+
+      const apiResult = await reservationApiService.gerenciarReservaLink({
+        cliente_uuid: clienteUuid,
+        confirmar_dia_reserva: acaoApi
+      });
+
+      if (!apiResult.success) {
+        throw new Error(apiResult.error || 'Erro ao processar ação na API');
+      }
+
+      console.log('✅ [ReservationDetails] API chamada com sucesso:', apiResult);
+
+      // Atualizar status no Supabase também
+      const confirmada = pendingAction === 'confirmar';
+      const cancelada = pendingAction === 'cancelar';
+      
+      await supabaseReservationService.updateReservaStatus(reserva.id, confirmada, cancelada);
+      
+      // Atualizar estado localmente sem buscar do servidor
+      const reservaAtualizada: ExtendedReserva = {
+        ...reserva,
+        confirmada_dia_reserva: confirmada,
+        status: cancelada ? 'cancelada' : (confirmada ? 'confirmada' : 'pendente')
+      };
+      
+      setReserva(reservaAtualizada);
+      
+      // Atualizar no contexto também
+      setSelectedReservation(reservaAtualizada as any);
+      
+      console.log('✅ [ReservationDetails] Status atualizado localmente com sucesso');
+      
+      // Mostrar diálogo de sucesso (não limpar pendingAction aqui, será limpo quando fechar o diálogo)
+      setSuccessDialogOpen(true);
+    } catch (error: any) {
+      console.error('❌ [ReservationDetails] Erro ao processar ação:', error);
+      setDialogOpen(false); // Fechar diálogo de confirmação em caso de erro
+      alert(`Erro ao ${pendingAction === 'confirmar' ? 'confirmar' : 'cancelar'} reserva: ${error.message}`);
+      setPendingAction(null); // Limpar apenas em caso de erro
     } finally {
       setIsProcessing(false);
     }
@@ -51,6 +268,7 @@ const ReservationDetailsPage = () => {
 
   const handleWhatsApp = () => {
     if (!reserva?.telefone) return;
+    // O telefone já está limpo (sem @lid e @c.us), só remover caracteres não numéricos
     const cleanPhone = reserva.telefone.replace(/\D/g, '');
     const message = `Olá ${reserva.nome.split(' ')[0]}, aqui é do restaurante. Sobre sua reserva para hoje às ${reserva.horario}...`;
     window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`, '_blank');
@@ -71,7 +289,7 @@ const ReservationDetailsPage = () => {
       <DashboardLayout>
         <div className="text-center py-20">
           <h2 className="text-white text-xl font-bold">Reserva não encontrada</h2>
-          <button onClick={() => navigate('/dashboard/reservas')} className="mt-4 text-electric hover:underline">Voltar</button>
+          <button onClick={() => router.push('/dashboard')} className="mt-4 text-electric hover:underline">Voltar</button>
         </div>
       </DashboardLayout>
     );
@@ -86,7 +304,7 @@ const ReservationDetailsPage = () => {
         {/* Header */}
         <div className="mb-8 flex items-center gap-4">
           <button 
-            onClick={() => navigate(-1)}
+            onClick={() => router.back()}
             className="p-2 rounded-xl bg-deep border border-gray-800 hover:bg-white/5 text-gray-400 hover:text-white transition-all"
           >
             <ArrowLeft size={20} />
@@ -217,7 +435,7 @@ const ReservationDetailsPage = () => {
                  {!isConfirmed && !isCanceled && (
                     <>
                        <button 
-                          onClick={() => handleStatusChange('confirmada')}
+                          onClick={() => handleStatusChangeClick('confirmada')}
                           disabled={isProcessing}
                           className="bg-electric hover:bg-electric/90 text-white font-bold py-4 rounded-xl shadow-lg shadow-electric/20 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] disabled:opacity-50"
                        >
@@ -225,7 +443,7 @@ const ReservationDetailsPage = () => {
                           Confirmar Reserva
                        </button>
                        <button 
-                          onClick={() => handleStatusChange('cancelada')}
+                          onClick={() => handleStatusChangeClick('cancelada')}
                           disabled={isProcessing}
                           className="bg-dark border border-red-500/30 text-red-400 hover:bg-red-500/10 font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all hover:scale-[1.02] disabled:opacity-50"
                        >
@@ -237,7 +455,7 @@ const ReservationDetailsPage = () => {
 
                  {isConfirmed && (
                     <button 
-                       onClick={() => handleStatusChange('cancelada')}
+                       onClick={() => handleStatusChangeClick('cancelada')}
                        disabled={isProcessing}
                        className="col-span-2 bg-dark border border-red-500/30 text-red-400 hover:bg-red-500/10 font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                     >
@@ -247,7 +465,7 @@ const ReservationDetailsPage = () => {
                  
                  {isCanceled && (
                     <button 
-                       onClick={() => handleStatusChange('confirmada')}
+                       onClick={() => handleStatusChangeClick('confirmada')}
                        disabled={isProcessing}
                        className="col-span-2 bg-dark border border-electric/30 text-electric hover:bg-electric/10 font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all disabled:opacity-50"
                     >
@@ -260,6 +478,29 @@ const ReservationDetailsPage = () => {
 
         </div>
       </div>
+
+      {/* Dialog de Confirmação */}
+      <ConfirmReservationDialog
+        isOpen={dialogOpen}
+        onClose={() => {
+          setDialogOpen(false);
+          setPendingAction(null);
+        }}
+        onConfirm={handleConfirmAction}
+        action={pendingAction || 'confirmar'}
+        isLoading={isProcessing}
+      />
+
+      {/* Dialog de Sucesso */}
+      <SuccessDialog
+        isOpen={successDialogOpen}
+        onClose={() => {
+          setSuccessDialogOpen(false);
+          setPendingAction(null); // Limpar ação quando fechar o diálogo
+          router.back(); // Navegar de volta para a página anterior
+        }}
+        action={pendingAction || 'confirmar'}
+      />
     </DashboardLayout>
   );
 };

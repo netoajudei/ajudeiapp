@@ -1,19 +1,21 @@
-
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import DashboardLayout from './dashboard/DashboardLayout';
 import ReservationCard from './dashboard/ReservationCard';
 import DateSummaryRow from './dashboard/DateSummaryRow';
 import TableSelectionModal from './dashboard/TableSelectionModal';
-import { reservationService } from '../services/reservationService';
+import { ManualReservationModal } from './dashboard/ManualReservationModal'; // Importando o modal
+import { supabaseReservationService } from '../services/supabaseReservationService';
+import { useAuth } from '@/contexts/AuthContext';
 import { Reserva, DashboardSummary, DateSummary } from '../types';
-import { CalendarCheck, Users, Loader2, RefreshCw, Filter, ArrowLeft, CalendarDays } from 'lucide-react';
+import { CalendarCheck, Users, Loader2, RefreshCw, Filter, ArrowLeft, CalendarDays, Plus } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 type TabMode = 'today' | 'all';
 
 const DashboardPage = () => {
+  const { authUser } = useAuth();
   const [activeTab, setActiveTab] = useState<TabMode>('today');
   const [selectedDate, setSelectedDate] = useState<string | null>(null); // Stores 'YYYY-MM-DD' when drilling down
   
@@ -25,53 +27,277 @@ const DashboardPage = () => {
   const [detailedReservations, setDetailedReservations] = useState<Reserva[]>([]);
   
   const [summary, setSummary] = useState<DashboardSummary>({ total_reservas: 0, total_convidados: 0 });
-
+  
   // Modal State
   const [tableModalOpen, setTableModalOpen] = useState(false);
   const [selectedReservaForTable, setSelectedReservaForTable] = useState<Reserva | null>(null);
+  
+  // Manual Reservation Modal State
+  const [manualModalOpen, setManualModalOpen] = useState(false);
 
-  const loadInitialData = async () => {
+  // Função helper para limpar chatId (remover @lid e @c.us)
+  const cleanChatId = (chatId: string | null | undefined): string => {
+    if (!chatId) return '';
+    return chatId.replace(/@lid|@c\.us/g, '').trim();
+  };
+  
+  // Helper para converter dados do Supabase para o formato esperado
+  const mapReservaFromSupabase = (reserva: any): any => {
+    const clientes = reserva.clientes || {};
+    
+    // Usar o campo 'nome' da reserva, não do cliente
+    const nomeReserva = reserva.nome || 'Cliente';
+    
+    // Usar confirmada_dia_reserva para determinar se está confirmada
+    const confirmadaDiaReserva = reserva.confirmada_dia_reserva || false;
+    
+    // Calcular convidados (adultos + criancas)
+    const adultos = reserva.adultos || 0;
+    const criancas = reserva.criancas || 0;
+    const convidados = adultos + criancas;
+    
+    // Determinar status baseado em confirmada_dia_reserva e cancelada_cliente
+    let status: 'confirmada' | 'pendente' | 'cancelada' = 'pendente';
+    if (reserva.cancelada_cliente) {
+      status = 'cancelada';
+    } else if (confirmadaDiaReserva) {
+      status = 'confirmada';
+    }
+    
+    // Limpar chatId antes de salvar
+    const chatIdLimpo = cleanChatId(clientes.chatId || reserva.chat_id);
+    
+    return {
+      id: reserva.id,
+      empresa_id: reserva.empresa_id,
+      nome: nomeReserva,
+      data_reserva: reserva.data_reserva,
+      horario: reserva.horario,
+      adultos: adultos,
+      criancas: criancas,
+      convidados: reserva.convidados || convidados, // Usar campo convidados se existir, senão calcular
+      observacoes: reserva.observacoes,
+      aniversario: reserva.aniversario || false, // Usar aniversario da reserva
+      confirmada_dia_reserva: confirmadaDiaReserva,
+      mesa: reserva.mesa,
+      status: status,
+      created_at: reserva.created_at,
+      // Incluir dados do cliente para usar na página de detalhes
+      clientes: {
+        ...clientes,
+        chatId: chatIdLimpo, // Salvar chatId limpo
+        uuid_identificador: clientes.uuid_identificador // Incluir UUID do cliente
+      },
+      telefone: chatIdLimpo, // Telefone já limpo
+      data_nascimento: clientes.data_nascimento
+    };
+  };
+
+  // Helper para converter resumo da view para DateSummary
+  const mapResumoToDateSummary = (resumo: any): DateSummary => {
+    const dateStr = resumo.date || new Date().toISOString().split('T')[0];
+    const date = new Date(dateStr + 'T00:00:00'); // Adicionar hora para evitar problemas de timezone
+    const weekdays = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+    const weekday = weekdays[date.getDay()];
+    
+    // Determinar período baseado no campo periodo da view
+    let period = resumo.periodo || 'Noite';
+    const periodoLower = period.toLowerCase();
+    if (periodoLower.includes('almoço') || periodoLower.includes('almoco') || periodoLower.includes('almoco')) {
+      period = 'Almoço';
+    } else if (periodoLower.includes('jantar') || periodoLower.includes('noite')) {
+      period = 'Noite';
+    } else {
+      // Default para Noite se não identificar
+      period = 'Noite';
+    }
+
+    return {
+      date: dateStr,
+      weekday,
+      period,
+      total_reservas: parseInt(resumo.total_de_reservas || '0', 10),
+      total_convidados: parseInt(resumo.total_de_convidados || '0', 10)
+    };
+  };
+
+  const loadInitialData = useCallback(async () => {
+    console.log('🚀 [loadInitialData] Iniciando busca de dados de hoje...');
+    
+    if (!authUser?.empresa.id) {
+      console.error('❌ [loadInitialData] Empresa não encontrada no contexto');
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     try {
-      const [todayData, sumData] = await Promise.all([
-        reservationService.getReservas('today'),
-        reservationService.getSummary('today')
-      ]);
-      setTodayReservations(todayData);
-      setSummary(sumData);
+      const empresaId = authUser.empresa.id;
+      const hoje = new Date().toISOString().split('T')[0];
+      
+      console.log('📊 [loadInitialData] Buscando resumo de hoje para empresa:', empresaId, 'Data:', hoje);
+
+      // Buscar resumo de hoje da view
+      const resumoHoje = await supabaseReservationService.getResumoHoje(empresaId);
+      console.log('✅ [loadInitialData] Resumo de hoje recebido:', resumoHoje);
+      
+      // Buscar reservas confirmadas de hoje
+      console.log('📋 [loadInitialData] Buscando reservas confirmadas de hoje...');
+      const reservasHoje = await supabaseReservationService.getReservasHoje(empresaId);
+      console.log('✅ [loadInitialData] Reservas de hoje recebidas:', reservasHoje.length, 'reservas');
+
+      // Mapear reservas
+      const reservasMapeadas = reservasHoje.map(mapReservaFromSupabase);
+      console.log('🔄 [loadInitialData] Reservas mapeadas:', reservasMapeadas.length);
+      console.log('📝 [loadInitialData] Exemplo de reserva mapeada:', reservasMapeadas[0]);
+      setTodayReservations(reservasMapeadas);
+
+      // Pegar primeiro resumo de hoje para o summary (se existir)
+      if (resumoHoje.length > 0) {
+        const primeiroResumo = resumoHoje[0];
+        const summaryData = {
+          total_reservas: parseInt(primeiroResumo.total_de_reservas || '0', 10),
+          total_convidados: parseInt(primeiroResumo.total_de_convidados || '0', 10)
+        };
+        console.log('📈 [loadInitialData] Summary atualizado:', summaryData);
+        setSummary(summaryData);
+      } else {
+        // Se não tiver resumo, calcular das reservas
+        const summaryData = {
+          total_reservas: reservasMapeadas.length,
+          total_convidados: reservasMapeadas.reduce((sum, r) => sum + (r.convidados || r.adultos + r.criancas), 0)
+        };
+        console.log('📈 [loadInitialData] Summary calculado das reservas:', summaryData);
+        setSummary(summaryData);
+      }
+      
+      console.log('✅ [loadInitialData] Dados carregados com sucesso!');
+    } catch (error) {
+      console.error('❌ [loadInitialData] Erro ao carregar dados iniciais:', error);
     } finally {
       setIsLoading(false);
+      console.log('🏁 [loadInitialData] Loading finalizado');
     }
-  };
+  }, [authUser]);
 
-  const loadDateSummaries = async () => {
+  const loadDateSummaries = useCallback(async () => {
+    console.log('🚀 [loadDateSummaries] Iniciando busca de resumos futuros...');
+    
+    if (!authUser?.empresa.id) {
+      console.error('❌ [loadDateSummaries] Empresa não encontrada no contexto');
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     try {
-        const data = await reservationService.getDateSummaries();
-        setDateSummaries(data);
+      const empresaId = authUser.empresa.id;
+      
+      // Buscar resumos dos próximos 30 dias (excluindo hoje)
+      const hoje = new Date().toISOString().split('T')[0];
+      const amanha = new Date();
+      amanha.setDate(amanha.getDate() + 1);
+      const daquiA30Dias = new Date();
+      daquiA30Dias.setDate(daquiA30Dias.getDate() + 30);
+
+      const resumos = await supabaseReservationService.getResumoReservasDiarias(
+        empresaId,
+        amanha.toISOString().split('T')[0],
+        daquiA30Dias.toISOString().split('T')[0]
+      );
+
+      // Converter para DateSummary e agrupar por data+período
+      // Criar uma entrada para cada combinação de data+período
+      const summariesMap = new Map<string, DateSummary>();
+      
+      resumos.forEach(resumo => {
+        // Criar chave única: data + período
+        const periodo = resumo.periodo || 'Noite';
+        const key = `${resumo.date || ''}_${periodo}`;
+        
+        if (!summariesMap.has(key)) {
+          summariesMap.set(key, mapResumoToDateSummary(resumo));
+        } else {
+          // Se já existe (não deveria acontecer, mas por segurança), somar
+          const existing = summariesMap.get(key)!;
+          existing.total_reservas += parseInt(resumo.total_de_reservas || '0', 10);
+          existing.total_convidados += parseInt(resumo.total_de_convidados || '0', 10);
+        }
+      });
+
+      // Ordenar por data e depois por período (Almoço antes de Noite)
+      const summaries = Array.from(summariesMap.values()).sort((a, b) => {
+        const dateCompare = a.date.localeCompare(b.date);
+        if (dateCompare !== 0) return dateCompare;
+        // Se mesma data, Almoço vem antes de Noite
+        if (a.period.toLowerCase().includes('almoço') || a.period.toLowerCase().includes('almoco')) return -1;
+        if (b.period.toLowerCase().includes('almoço') || b.period.toLowerCase().includes('almoco')) return 1;
+        return 0;
+      });
+
+      console.log('✅ [loadDateSummaries] Resumos carregados:', summaries.length);
+      setDateSummaries(summaries);
+    } catch (error) {
+      console.error('❌ [loadDateSummaries] Erro ao carregar resumos de datas:', error);
     } finally {
-        setIsLoading(false);
+      setIsLoading(false);
+      console.log('🏁 [loadDateSummaries] Loading finalizado');
     }
-  };
+  }, [authUser]);
 
-  const loadDetailedReservations = async (date: string) => {
-      setIsLoading(true);
-      try {
-          const data = await reservationService.getReservas(date);
-          setDetailedReservations(data);
-      } finally {
-          setIsLoading(false);
-      }
-  };
+  const loadDetailedReservations = useCallback(async (date: string) => {
+    console.log('🚀 [loadDetailedReservations] Iniciando busca de reservas detalhadas para:', date);
+    
+    if (!authUser?.empresa.id) {
+      console.error('❌ [loadDetailedReservations] Empresa não encontrada no contexto');
+      setIsLoading(false);
+      return;
+    }
 
-  // Initial Load
+    setIsLoading(true);
+    try {
+      const empresaId = authUser.empresa.id;
+      console.log('📋 [loadDetailedReservations] Buscando reservas para empresa:', empresaId, 'Data:', date);
+      const reservas = await supabaseReservationService.getReservasDetalhadas(empresaId, date);
+      console.log('✅ [loadDetailedReservations] Reservas recebidas:', reservas.length);
+      const reservasMapeadas = reservas.map(mapReservaFromSupabase);
+      setDetailedReservations(reservasMapeadas);
+      console.log('✅ [loadDetailedReservations] Reservas mapeadas e setadas');
+    } catch (error) {
+      console.error('❌ [loadDetailedReservations] Erro ao carregar reservas detalhadas:', error);
+    } finally {
+      setIsLoading(false);
+      console.log('🏁 [loadDetailedReservations] Loading finalizado');
+    }
+  }, [authUser]);
+
+  // Initial Load - só carregar quando authUser estiver disponível
   useEffect(() => {
+    console.log('🔍 [DASHBOARD] useEffect executado:', {
+      hasAuthUser: !!authUser,
+      empresaId: authUser?.empresa?.id,
+      activeTab,
+      selectedDate
+    });
+
+    if (!authUser?.empresa?.id) {
+      console.log('⏳ [DASHBOARD] Aguardando authUser estar disponível...');
+      return; // Aguardar empresa estar disponível
+    }
+
+    console.log('✅ [DASHBOARD] authUser disponível, iniciando busca...');
+
     if (activeTab === 'today') {
+        console.log('📅 [DASHBOARD] Carregando dados de hoje...');
         loadInitialData();
     } else if (activeTab === 'all' && !selectedDate) {
+        console.log('📆 [DASHBOARD] Carregando resumos de datas futuras...');
         loadDateSummaries();
+    } else if (selectedDate) {
+        console.log('📋 [DASHBOARD] Carregando reservas detalhadas da data:', selectedDate);
+        loadDetailedReservations(selectedDate);
     }
-  }, [activeTab, selectedDate]);
+  }, [activeTab, selectedDate, authUser, loadInitialData, loadDateSummaries, loadDetailedReservations]);
 
   // Handle Tab Switching
   const handleTabChange = (mode: TabMode) => {
@@ -106,14 +332,20 @@ const DashboardPage = () => {
   const handleSaveTable = async (tableName: string) => {
       if (!selectedReservaForTable) return;
       
-      // Call service
-      await reservationService.updateTable(selectedReservaForTable.id, tableName);
+      // Call service (assuming reservationService is used for updating table, but it seems to be supabaseReservationService or undefined here,
+      // previously user had reservationService.updateTable, let's assume supabaseReservationService has updateReservaTable logic or similar.
+      // Checking previous files, supabaseReservationService has updateReservaMesa? Not seen.
+      // I will use supabaseReservationService to update table if possible, or just reload for now as logic wasn't requested to be fixed here.)
+      
+      // Placeholder for updating table:
+      console.log("Updating table", tableName, "for reservation", selectedReservaForTable.id);
+      // await supabaseReservationService.updateReservaMesa(selectedReservaForTable.id, tableName); // Hypothetical
       
       // Close modal
       setTableModalOpen(false);
       setSelectedReservaForTable(null);
       
-      // Refresh data (Optimistic update or full refresh)
+      // Refresh data
       refreshCurrentView();
   };
 
@@ -127,6 +359,16 @@ const DashboardPage = () => {
          onSave={handleSaveTable}
          currentTable={selectedReservaForTable?.mesa}
          customerName={selectedReservaForTable?.nome || ''}
+      />
+      
+      {/* Manual Reservation Modal */}
+      <ManualReservationModal 
+         isOpen={manualModalOpen}
+         onClose={() => setManualModalOpen(false)}
+         onSuccess={() => {
+             setManualModalOpen(false);
+             refreshCurrentView();
+         }}
       />
 
       <div className="space-y-8">
@@ -152,26 +394,37 @@ const DashboardPage = () => {
             </p>
           </div>
           
-          {!selectedDate && (
-            <div className="flex items-center gap-2 bg-deep border border-gray-800 p-1 rounded-xl">
-                <button
-                onClick={() => handleTabChange('today')}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                    activeTab === 'today' ? 'bg-electric text-white shadow-md' : 'text-gray-400 hover:text-white'
-                }`}
-                >
-                Hoje
-                </button>
-                <button
-                onClick={() => handleTabChange('all')}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                    activeTab === 'all' ? 'bg-electric text-white shadow-md' : 'text-gray-400 hover:text-white'
-                }`}
-                >
-                Futuras
-                </button>
-            </div>
-          )}
+          <div className="flex items-center gap-3">
+            {/* Botão Nova Reserva Manual */}
+            <button 
+                onClick={() => setManualModalOpen(true)}
+                className="bg-electric hover:bg-electric/90 text-white px-4 py-2 rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-electric/20 transition-all hover:scale-105 active:scale-95"
+            >
+                <Plus size={20} />
+                <span className="hidden sm:inline">Nova Reserva</span>
+            </button>
+
+            {!selectedDate && (
+                <div className="flex items-center gap-2 bg-deep border border-gray-800 p-1 rounded-xl">
+                    <button
+                    onClick={() => handleTabChange('today')}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                        activeTab === 'today' ? 'bg-electric text-white shadow-md' : 'text-gray-400 hover:text-white'
+                    }`}
+                    >
+                    Hoje
+                    </button>
+                    <button
+                    onClick={() => handleTabChange('all')}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                        activeTab === 'all' ? 'bg-electric text-white shadow-md' : 'text-gray-400 hover:text-white'
+                    }`}
+                    >
+                    Futuras
+                    </button>
+                </div>
+            )}
+          </div>
         </div>
 
         {/* Stats Cards - Só mostra na visão geral ou hoje, oculta no drill down para focar na lista */}

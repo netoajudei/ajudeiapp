@@ -1,7 +1,10 @@
 
+"use client";
+
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Link } from 'react-router-dom';
+import Link from 'next/link';
+import { useReservation } from '@/contexts/ReservationContext';
 import { Calendar, Clock, Users, Cake, CheckCircle2, MessageSquare, AlertCircle, ChevronRight, MapPin, Edit3 } from 'lucide-react';
 import { Reserva } from '../../types';
 
@@ -13,14 +16,20 @@ interface ReservationCardProps {
 }
 
 const ReservationCard: React.FC<ReservationCardProps> = ({ reserva, delay = 0, onAssignTable, showTableAction = false }) => {
+  const { setSelectedReservation } = useReservation();
   const totalPessoas = reserva.adultos + reserva.criancas;
   
   // Logic for status icon
   const isConfirmed = reserva.confirmada_dia_reserva;
   const isCanceled = reserva.status === 'cancelada';
   
+  const handleClick = () => {
+    // Salvar dados da reserva no contexto antes de navegar
+    setSelectedReservation(reserva as any);
+  };
+  
   return (
-    <Link to={`/dashboard/reservas/${reserva.id}`}>
+    <Link href={`/dashboard/reservas/${reserva.id}`} onClick={handleClick}>
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}

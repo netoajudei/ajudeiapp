@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: #0A0E12;
+  color: #ffffff;
+  font-family: 'Inter', 'Space Grotesk', 'JetBrains Mono', sans-serif;
+  font-feature-settings: "liga" 1, "kern" 1;
+  min-height: 100vh;
+}
+
+::selection {
+  background-color: #2293DD;
+  color: #ffffff;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0A0E12;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2293DD;
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #00D4FF;
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.\shadow-electric\/20 {
+  box-shadow: 0 0 25px rgba(34, 147, 221, 0.2);
+}
+
+.\shadow-electric\/25 {
+  box-shadow: 0 0 30px rgba(34, 147, 221, 0.25);
+}
+
+.\shadow-electric\/30 {
+  box-shadow: 0 0 30px rgba(34, 147, 221, 0.3);
+}
+
+.\shadow-electric\/40 {
+  box-shadow: 0 0 35px rgba(34, 147, 221, 0.4);
+}
+

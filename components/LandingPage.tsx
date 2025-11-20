@@ -2,7 +2,7 @@
 
 import React, { useEffect } from 'react';
 import { motion, useScroll, useSpring } from 'framer-motion';
-import { Link } from 'react-router-dom';
+import Link from 'next/link';
 import Hero from './Hero';
 import Features from './Features';
 import ChatDemo from './ChatDemo';
@@ -62,7 +62,7 @@ const LandingPage = () => {
             <a href="#precos" className="hover:text-electric transition-colors">Preços</a>
           </div>
           <Link 
-            to="/login"
+            href="/login"
             className="px-5 py-2 bg-white text-dark font-bold rounded-lg hover:bg-gray-200 transition-colors text-sm"
           >
             Login

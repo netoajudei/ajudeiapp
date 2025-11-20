@@ -3,7 +3,8 @@
 "use client";
 
 import React, { useState } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   LayoutDashboard, 
@@ -22,16 +23,24 @@ import {
   PlusCircle,
   BarChart3
 } from 'lucide-react';
-import { authService } from '../../services/authService';
+import { useAuth } from '@/contexts/AuthContext';
 import NewReservationModal from './NewReservationModal';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
 }
 
-const SidebarItem = ({ icon: Icon, label, path, isActive, onClick }: any) => (
+interface SidebarItemProps {
+  icon: React.ComponentType<{ size?: number }>;
+  label: string;
+  path: string;
+  isActive: boolean;
+  onClick?: () => void;
+}
+
+const SidebarItem = ({ icon: Icon, label, path, isActive, onClick }: SidebarItemProps) => (
   <Link 
-    to={path} 
+    href={path} 
     onClick={onClick}
     className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all mb-1 ${
       isActive 
@@ -48,12 +57,13 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isNewReservationModalOpen, setIsNewReservationModalOpen] = useState(false);
   
-  const navigate = useNavigate();
-  const location = useLocation();
+  const router = useRouter();
+  const pathname = usePathname();
+  const { signOut, authUser } = useAuth();
 
   const handleLogout = async () => {
-    await authService.logout();
-    navigate('/login');
+    await signOut();
+    router.push('/login');
   };
 
   const menuItems = [
@@ -99,11 +109,30 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
         `}
       >
         <div className="p-6 border-b border-gray-800 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-white font-display font-bold text-xl">
-            <div className="w-8 h-8 bg-electric rounded-lg flex items-center justify-center">
+          <div className="flex items-center gap-3 text-white font-display font-bold text-lg">
+            {authUser?.empresa?.logo ? (
+              <img 
+                src={authUser.empresa.logo} 
+                alt="Logo" 
+                className="w-10 h-10 rounded-lg object-contain border-2 p-1"
+                style={{ borderColor: authUser.empresa.cor || '#2293DD' }}
+              />
+            ) : (
+              <div 
+                className="w-10 h-10 rounded-lg flex items-center justify-center"
+                style={{ backgroundColor: authUser?.empresa?.cor || '#2293DD' }}
+              >
               <Bot size={20} />
+              </div>
+            )}
+            <div className="flex flex-col">
+              <span className="text-base leading-tight">
+                {authUser?.empresa?.fantasia || 'RestauranteIA'}
+              </span>
+              <span className="text-xs text-gray-500 font-normal">
+                {authUser?.profile?.nome || 'Usuário'}
+              </span>
             </div>
-            Restaurante<span className="text-electric">IA</span>
           </div>
           <button onClick={() => setIsSidebarOpen(false)} className="md:hidden text-gray-400">
             <X size={24} />
@@ -125,20 +154,25 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
           </button>
 
           <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-4 px-2">Menu</div>
-          {menuItems.map((item) => (
+          {menuItems.map((item) => {
+            const isActive = item.path === '/dashboard' 
+              ? pathname === '/dashboard'
+              : pathname?.startsWith(item.path);
+            return (
             <SidebarItem 
               key={item.path}
               {...item}
-              isActive={location.pathname === item.path}
+                isActive={Boolean(isActive)}
               onClick={() => setIsSidebarOpen(false)}
             />
-          ))}
+            );
+          })}
 
           {/* Botão Temporário de Teste */}
           <div className="mt-8 px-2">
              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Dev Tools</div>
              <Link 
-                to={`/reserva/${testUuid}`}
+                href={`/reserva/${testUuid}`}
                 className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/5 text-blue-300 hover:bg-white/10 hover:text-blue-200 transition-all border border-blue-500/20"
              >
                 <PlayCircle size={18} />

@@ -1,95 +1,231 @@
-
 "use client";
 
-import React, { useEffect, useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { motion } from 'framer-motion';
+import React, { useEffect, useState, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from './DashboardLayout';
-import { rulesService } from '../../services/rulesService';
-import { ReservationRules } from '../../types';
-import { Loader2, Save, Clock, Users, CalendarOff, AlertCircle, Sun, Moon } from 'lucide-react';
+import { reservationRulesService } from '../../services/reservationRulesService';
+import { ReservationRules, PeriodoLimiteDB } from '../../types';
+import { useAuth } from '@/contexts/AuthContext';
+import { Loader2, Clock, Users, CalendarOff, AlertCircle, Sun, Moon, AlertTriangle, Check } from 'lucide-react';
 
 const DAYS_OF_WEEK = [
-  { id: 0, label: 'Dom', full: 'Domingo' },
-  { id: 1, label: 'Seg', full: 'Segunda-feira' },
-  { id: 2, label: 'Ter', full: 'Terça-feira' },
-  { id: 3, label: 'Qua', full: 'Quarta-feira' },
-  { id: 4, label: 'Qui', full: 'Quinta-feira' },
-  { id: 5, label: 'Sex', full: 'Sexta-feira' },
-  { id: 6, label: 'Sáb', full: 'Sábado' },
+  { id: 1, label: 'Dom', full: 'Domingo' },
+  { id: 2, label: 'Seg', full: 'Segunda-feira' },
+  { id: 3, label: 'Ter', full: 'Terça-feira' },
+  { id: 4, label: 'Qua', full: 'Quarta-feira' },
+  { id: 5, label: 'Qui', full: 'Quinta-feira' },
+  { id: 6, label: 'Sex', full: 'Sexta-feira' },
+  { id: 7, label: 'Sáb', full: 'Sábado' },
 ];
 
-const RulesPage = () => {
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
-  const [rules, setRules] = useState<ReservationRules | null>(null);
+interface ConfirmDialogState {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  onConfirm: () => Promise<void>;
+  newValue?: any;
+}
 
-  const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<ReservationRules>();
+const RulesPage = () => {
+  const { authUser } = useAuth();
+  const [isLoading, setIsLoading] = useState(true);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [rules, setRules] = useState<ReservationRules | null>(null);
   
-  // Watch unavailable days to update UI state locally
-  const diasIndisponiveis = watch('dias_semana_indisponiveis') || [];
+  // Dialog State
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: async () => {},
+  });
+
+  // Local state to manage inputs before saving
+  const [localValues, setLocalValues] = useState({
+    minPeople: 0,
+    maxPeople: 0,
+    cutoffTime: '',
+    almocoLimit: 0,
+    jantarLimit: 0
+  });
+
+  const loadRules = async () => {
+    if (!authUser?.empresa.id) return;
+    setIsLoading(true);
+    try {
+      const data = await reservationRulesService.getRules(authUser.empresa.id);
+      
+      if (data) {
+        setRules(data);
+        // Inicializar valores locais
+        const dbLimits = data.limites_por_periodo || [];
+        const almocoLimit = dbLimits.find(l => l.nome_periodo === 'Almoço')?.limite_convidados || 50;
+        const jantarLimit = dbLimits.find(l => l.nome_periodo === 'A noite')?.limite_convidados || 50;
+
+        setLocalValues({
+            minPeople: data.limite_minimo_pessoas_reserva,
+            maxPeople: data.limite_maximo_pessoas_reserva,
+            cutoffTime: data.horario_limite_reserva_mesmo_dia,
+            almocoLimit,
+            jantarLimit
+        });
+      } else {
+         // Defaults
+         const defaultRules = {
+            id: 0, // Placeholder
+            empresa_id: authUser.empresa.id,
+            limite_minimo_pessoas_reserva: 2,
+            limite_maximo_pessoas_reserva: 20,
+            horario_limite_reserva_mesmo_dia: '18:00:00',
+            dias_semana_indisponiveis: [],
+            limites_por_periodo: [
+                { nome_periodo: 'Almoço', limite_convidados: 50 },
+                { nome_periodo: 'A noite', limite_convidados: 50 }
+            ]
+         };
+         setRules(defaultRules);
+         setLocalValues({
+            minPeople: 2,
+            maxPeople: 20,
+            cutoffTime: '18:00',
+            almocoLimit: 50,
+            jantarLimit: 50
+         });
+      }
+    } catch (err) {
+      console.error("Erro ao carregar regras:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const loadRules = async () => {
-      try {
-        const data = await rulesService.getRules();
-        setRules(data);
-        // Set form values
-        setValue('id', data.id);
-        setValue('empresa_id', data.empresa_id);
-        setValue('limite_minimo_pessoas_reserva', data.limite_minimo_pessoas_reserva);
-        setValue('limite_maximo_pessoas_reserva', data.limite_maximo_pessoas_reserva);
-        setValue('horario_limite_reserva_mesmo_dia', data.horario_limite_reserva_mesmo_dia);
-        setValue('dias_semana_indisponiveis', data.dias_semana_indisponiveis);
-        setValue('limites_por_periodo', data.limites_por_periodo);
-      } finally {
-        setIsLoading(false);
-      }
-    };
     loadRules();
-  }, [setValue]);
+  }, [authUser]);
 
-  const onSubmit = async (data: ReservationRules) => {
-    setIsSaving(true);
+  const handleSave = async (updatedFields: Partial<ReservationRules>) => {
+    if (!rules || !authUser?.empresa.id) return;
+    
+    setIsUpdating(true);
+    setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+
     try {
-      // Ensure numeric conversions
-      const formattedData: ReservationRules = {
-        ...data,
-        limite_minimo_pessoas_reserva: Number(data.limite_minimo_pessoas_reserva),
-        limite_maximo_pessoas_reserva: Number(data.limite_maximo_pessoas_reserva),
-        limites_por_periodo: {
-            almoco: Number(data.limites_por_periodo.almoco),
-            jantar: Number(data.limites_por_periodo.jantar)
-        }
+      const payload = {
+        ...rules,
+        ...updatedFields
       };
+      
+      const saved = await reservationRulesService.saveRules(payload);
+      setRules(saved);
+      
+      // Atualizar valores locais para refletir o salvo
+      const dbLimits = saved.limites_por_periodo || [];
+      const almocoLimit = dbLimits.find(l => l.nome_periodo === 'Almoço')?.limite_convidados || 0;
+      const jantarLimit = dbLimits.find(l => l.nome_periodo === 'A noite')?.limite_convidados || 0;
+      
+      setLocalValues({
+          minPeople: saved.limite_minimo_pessoas_reserva,
+          maxPeople: saved.limite_maximo_pessoas_reserva,
+          cutoffTime: saved.horario_limite_reserva_mesmo_dia,
+          almocoLimit,
+          jantarLimit
+      });
 
-      await rulesService.saveRules(formattedData);
-      // Optional: Show toast success
     } catch (error) {
-      console.error("Erro ao salvar", error);
+      console.error("Erro ao salvar:", error);
+      alert("Erro ao salvar alteração.");
     } finally {
-      setIsSaving(false);
+      setIsUpdating(false);
     }
   };
 
-  const toggleDay = (dayId: number) => {
-    const current = diasIndisponiveis;
-    // Lógica invertida para UX: Se está no array "indisponiveis", o dia está FECHADO.
-    // O usuário clica para ABRIR (remover do array) ou FECHAR (adicionar no array).
-    // Vamos assumir que o botão iluminado significa "DIA ABERTO".
-    
-    const isClosed = current.includes(dayId);
-    
-    if (isClosed) {
-      // Se estava fechado, remove do array (fica aberto)
-      setValue('dias_semana_indisponiveis', current.filter(id => id !== dayId));
-    } else {
-      // Se estava aberto, adiciona no array (fica fechado)
-      setValue('dias_semana_indisponiveis', [...current, dayId]);
-    }
+  // Handlers para cada tipo de mudança
+
+  const onPeopleLimitChange = (type: 'min' | 'max', newValue: number) => {
+     if (!rules) return;
+     const oldValue = type === 'min' ? rules.limite_minimo_pessoas_reserva : rules.limite_maximo_pessoas_reserva;
+     
+     if (newValue === oldValue) return;
+
+     setConfirmDialog({
+         isOpen: true,
+         title: 'Alterar Limites de Pessoas?',
+         message: `Deseja alterar o limite ${type === 'min' ? 'mínimo' : 'máximo'} de ${oldValue} para ${newValue} pessoas?`,
+         onConfirm: async () => {
+             await handleSave(type === 'min' 
+                 ? { limite_minimo_pessoas_reserva: newValue } 
+                 : { limite_maximo_pessoas_reserva: newValue }
+             );
+         }
+     });
   };
 
-  if (isLoading) {
+  const onTimeLimitChange = (newTime: string) => {
+      if (!rules) return;
+      // Comparar apenas HH:MM
+      const oldTime = rules.horario_limite_reserva_mesmo_dia.substring(0, 5);
+      if (newTime === oldTime) return;
+
+      setConfirmDialog({
+          isOpen: true,
+          title: 'Alterar Horário Limite?',
+          message: `Deseja alterar o horário limite de reservas para o mesmo dia de ${oldTime} para ${newTime}?`,
+          onConfirm: async () => {
+              await handleSave({ horario_limite_reserva_mesmo_dia: newTime });
+          }
+      });
+  };
+
+  const onDayToggle = (dayId: number) => {
+      if (!rules) return;
+      const isCurrentlyClosed = rules.dias_semana_indisponiveis.includes(dayId);
+      const action = isCurrentlyClosed ? 'ABRIR' : 'FECHAR';
+      const dayName = DAYS_OF_WEEK.find(d => d.id === dayId)?.full;
+
+      setConfirmDialog({
+          isOpen: true,
+          title: `${action} ${dayName}?`,
+          message: `Tem certeza que deseja ${action.toLowerCase()} o agendamento para ${dayName}?`,
+          onConfirm: async () => {
+              let newDays;
+              if (isCurrentlyClosed) {
+                  // Remove from array (Open)
+                  newDays = rules.dias_semana_indisponiveis.filter(id => id !== dayId);
+              } else {
+                  // Add to array (Close)
+                  newDays = [...rules.dias_semana_indisponiveis, dayId];
+              }
+              await handleSave({ dias_semana_indisponiveis: newDays });
+          }
+      });
+  };
+
+  const onPeriodCapacityChange = (period: 'Almoço' | 'A noite', newValue: number) => {
+      if (!rules) return;
+      
+      const currentArray = [...rules.limites_por_periodo];
+      const index = currentArray.findIndex(p => p.nome_periodo === period);
+      const oldValue = index >= 0 ? currentArray[index].limite_convidados : 0;
+
+      if (newValue === oldValue) return;
+
+      setConfirmDialog({
+          isOpen: true,
+          title: `Alterar Capacidade - ${period}?`,
+          message: `Deseja alterar a capacidade do ${period} de ${oldValue} para ${newValue} pessoas?`,
+          onConfirm: async () => {
+             const newArray = [...currentArray];
+             if (index >= 0) {
+                 newArray[index] = { ...newArray[index], limite_convidados: newValue };
+             } else {
+                 newArray.push({ nome_periodo: period, limite_convidados: newValue });
+             }
+             await handleSave({ limites_por_periodo: newArray });
+          }
+      });
+  };
+
+  if (isLoading || !rules) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center h-[60vh]">
@@ -101,13 +237,13 @@ const RulesPage = () => {
 
   return (
     <DashboardLayout>
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-4xl mx-auto pb-20">
         <div className="mb-8">
           <h1 className="text-3xl font-display font-bold text-white mb-2">Regras de Reserva</h1>
           <p className="text-gray-400">Defina os limites e restrições para o agendamento automático.</p>
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-8">
+        <div className="space-y-8">
           
           {/* Seção 1: Limites Gerais */}
           <section className="grid md:grid-cols-2 gap-6">
@@ -123,23 +259,27 @@ const RulesPage = () => {
                    <div>
                       <label className="block text-xs font-medium text-gray-500 uppercase mb-2">Mínimo</label>
                       <input 
-                        {...register('limite_minimo_pessoas_reserva', { required: true, min: 1 })}
                         type="number"
+                        value={localValues.minPeople}
+                        onChange={(e) => setLocalValues(prev => ({...prev, minPeople: Number(e.target.value)}))}
+                        onBlur={() => onPeopleLimitChange('min', localValues.minPeople)}
                         className="w-full bg-dark border border-gray-700 rounded-xl px-4 py-3 text-white focus:border-electric outline-none transition-all"
                       />
                    </div>
                    <div>
                       <label className="block text-xs font-medium text-gray-500 uppercase mb-2">Máximo</label>
                       <input 
-                        {...register('limite_maximo_pessoas_reserva', { required: true })}
                         type="number"
+                        value={localValues.maxPeople}
+                        onChange={(e) => setLocalValues(prev => ({...prev, maxPeople: Number(e.target.value)}))}
+                        onBlur={() => onPeopleLimitChange('max', localValues.maxPeople)}
                         className="w-full bg-dark border border-gray-700 rounded-xl px-4 py-3 text-white focus:border-electric outline-none transition-all"
                       />
                    </div>
                 </div>
                 <p className="text-xs text-gray-500 mt-4 flex items-center gap-2">
                    <AlertCircle size={12} />
-                   Define o tamanho das mesas aceitas pelo bot.
+                   Alterações requerem confirmação ao sair do campo.
                 </p>
              </div>
 
@@ -154,9 +294,14 @@ const RulesPage = () => {
                 <div>
                     <label className="block text-xs font-medium text-gray-500 uppercase mb-2">Horário Limite (Mesmo Dia)</label>
                     <input 
-                    {...register('horario_limite_reserva_mesmo_dia', { required: true })}
-                    type="time"
-                    className="w-full bg-dark border border-gray-700 rounded-xl px-4 py-3 text-white focus:border-electric outline-none transition-all"
+                        type="time"
+                        value={localValues.cutoffTime.substring(0, 5)}
+                        onChange={(e) => {
+                            const val = e.target.value;
+                            setLocalValues(prev => ({...prev, cutoffTime: val}));
+                        }}
+                        onBlur={() => onTimeLimitChange(localValues.cutoffTime)}
+                        className="w-full bg-dark border border-gray-700 rounded-xl px-4 py-3 text-white focus:border-electric outline-none transition-all"
                     />
                 </div>
                 <p className="text-xs text-gray-500 mt-4">
@@ -172,27 +317,28 @@ const RulesPage = () => {
                     <CalendarOff size={20} />
                 </div>
                 <div>
-                    <h3 className="text-lg font-bold text-white">Dias de Funcionamento</h3>
-                    <p className="text-xs text-gray-500">Selecione os dias que o restaurante <span className="text-green-400 font-bold">ABRE</span> para reservas.</p>
+                    <h3 className="text-lg font-bold text-white">Dias Disponíveis</h3>
+                    <p className="text-xs text-gray-500">Clique para <span className="text-green-400 font-bold">ABRIR</span> ou <span className="text-gray-500 font-bold">FECHAR</span> um dia.</p>
                 </div>
               </div>
 
               <div className="flex flex-wrap gap-3">
                   {DAYS_OF_WEEK.map((day) => {
-                      const isAvailable = !diasIndisponiveis.includes(day.id);
+                      const isAvailable = !rules.dias_semana_indisponiveis.includes(day.id);
                       return (
                           <button
                             key={day.id}
                             type="button"
-                            onClick={() => toggleDay(day.id)}
+                            onClick={() => onDayToggle(day.id)}
                             className={`
-                                px-4 py-3 rounded-xl font-medium text-sm transition-all border
+                                px-4 py-3 rounded-xl font-medium text-sm transition-all border flex items-center gap-2
                                 ${isAvailable 
                                     ? 'bg-green-500/10 border-green-500/50 text-green-400 shadow-[0_0_15px_rgba(74,222,128,0.1)]' 
-                                    : 'bg-dark border-gray-800 text-gray-600 hover:border-gray-600'
+                                    : 'bg-dark border-gray-800 text-gray-600 hover:border-gray-600 opacity-60'
                                 }
                             `}
                           >
+                              {isAvailable && <Check size={14} />}
                               {day.full}
                           </button>
                       )
@@ -200,7 +346,7 @@ const RulesPage = () => {
               </div>
           </section>
 
-          {/* Seção 3: Capacidade por Período (JSONB) */}
+          {/* Seção 3: Capacidade por Período */}
           <section className="bg-deep/50 border border-gray-800 rounded-2xl p-6">
              <h3 className="text-lg font-bold text-white mb-6">Capacidade por Período</h3>
              <div className="grid md:grid-cols-2 gap-6">
@@ -215,8 +361,10 @@ const RulesPage = () => {
                     </div>
                     <div className="w-24">
                          <input 
-                            {...register('limites_por_periodo.almoco')}
                             type="number"
+                            value={localValues.almocoLimit}
+                            onChange={(e) => setLocalValues(prev => ({...prev, almocoLimit: Number(e.target.value)}))}
+                            onBlur={() => onPeriodCapacityChange('Almoço', localValues.almocoLimit)}
                             className="w-full bg-deep border border-gray-700 rounded-lg px-3 py-2 text-right text-white focus:border-electric outline-none"
                          />
                     </div>
@@ -228,13 +376,15 @@ const RulesPage = () => {
                         <Moon size={24} />
                     </div>
                     <div className="flex-1">
-                        <div className="text-sm font-bold text-white mb-1">Jantar</div>
+                        <div className="text-sm font-bold text-white mb-1">Jantar (A noite)</div>
                         <div className="text-xs text-gray-500">Capacidade máxima</div>
                     </div>
                     <div className="w-24">
                          <input 
-                            {...register('limites_por_periodo.jantar')}
                             type="number"
+                            value={localValues.jantarLimit}
+                            onChange={(e) => setLocalValues(prev => ({...prev, jantarLimit: Number(e.target.value)}))}
+                            onBlur={() => onPeriodCapacityChange('A noite', localValues.jantarLimit)}
                             className="w-full bg-deep border border-gray-700 rounded-lg px-3 py-2 text-right text-white focus:border-electric outline-none"
                          />
                     </div>
@@ -242,21 +392,62 @@ const RulesPage = () => {
              </div>
           </section>
 
-          {/* Save Button */}
-          <div className="flex justify-end pt-4">
-              <motion.button
-                 whileHover={{ scale: 1.02 }}
-                 whileTap={{ scale: 0.98 }}
-                 disabled={isSaving}
-                 type="submit"
-                 className="bg-electric hover:bg-electric/90 text-white font-bold py-4 px-8 rounded-xl shadow-lg shadow-electric/20 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                 {isSaving ? <Loader2 className="animate-spin" /> : <Save size={20} />}
-                 Salvar Regras
-              </motion.button>
-          </div>
+        </div>
 
-        </form>
+        {/* Confirmation Dialog */}
+        <AnimatePresence>
+           {confirmDialog.isOpen && (
+               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+                   <motion.div 
+                      initial={{ scale: 0.95, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      exit={{ scale: 0.95, opacity: 0 }}
+                      className="bg-deep border border-gray-700 w-full max-w-md rounded-2xl shadow-2xl p-6"
+                   >
+                       <div className="flex items-center gap-4 mb-4">
+                           <div className="w-12 h-12 rounded-full bg-electric/10 flex items-center justify-center text-electric shrink-0">
+                               <AlertTriangle size={24} />
+                           </div>
+                           <div>
+                               <h3 className="text-lg font-bold text-white">{confirmDialog.title}</h3>
+                           </div>
+                       </div>
+                       
+                       <p className="text-gray-400 mb-6 ml-16 text-sm">
+                           {confirmDialog.message}
+                       </p>
+
+                       <div className="flex gap-3 justify-end">
+                           <button
+                             onClick={() => {
+                                 setConfirmDialog(prev => ({...prev, isOpen: false}));
+                                 // Reverter valor local para o valor salvo (cancel)
+                                 const dbLimits = rules.limites_por_periodo || [];
+                                 setLocalValues({
+                                    minPeople: rules.limite_minimo_pessoas_reserva,
+                                    maxPeople: rules.limite_maximo_pessoas_reserva,
+                                    cutoffTime: rules.horario_limite_reserva_mesmo_dia,
+                                    almocoLimit: dbLimits.find(l => l.nome_periodo === 'Almoço')?.limite_convidados || 50,
+                                    jantarLimit: dbLimits.find(l => l.nome_periodo === 'A noite')?.limite_convidados || 50
+                                 });
+                             }}
+                             className="px-4 py-2 rounded-lg font-bold text-gray-400 hover:bg-white/5 transition-all text-sm"
+                           >
+                             Cancelar
+                           </button>
+                           <button
+                             onClick={confirmDialog.onConfirm}
+                             disabled={isUpdating}
+                             className="px-4 py-2 rounded-lg font-bold text-white bg-electric hover:bg-electric/90 transition-all flex items-center gap-2 shadow-lg shadow-electric/20 text-sm"
+                           >
+                             {isUpdating ? <Loader2 className="animate-spin" size={16} /> : 'Sim, Confirmar'}
+                           </button>
+                       </div>
+                   </motion.div>
+               </div>
+           )}
+        </AnimatePresence>
+
       </div>
     </DashboardLayout>
   );

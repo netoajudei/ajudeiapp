@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useEffect, useState } from 'react';
@@ -7,12 +6,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from './DashboardLayout';
 import { eventsService } from '../../services/eventsService';
 import { Evento } from '../../types';
+import { useAuth } from '@/contexts/AuthContext';
 import { 
     Loader2, Plus, Trash2, Edit2, Calendar, 
     PartyPopper, X, AlignLeft, CalendarCheck
 } from 'lucide-react';
 
 const EventsPage = () => {
+    const { authUser } = useAuth();
     const [events, setEvents] = useState<Evento[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -21,10 +22,14 @@ const EventsPage = () => {
     const { register, handleSubmit, reset } = useForm<Evento>();
 
     const loadEvents = async () => {
+        if (!authUser?.empresa.id) return;
+
         setIsLoading(true);
         try {
-            const data = await eventsService.getEvents();
+            const data = await eventsService.getEvents(authUser.empresa.id);
             setEvents(data);
+        } catch (e) {
+            console.error("Erro ao carregar eventos", e);
         } finally {
             setIsLoading(false);
         }
@@ -32,16 +37,17 @@ const EventsPage = () => {
 
     useEffect(() => {
         loadEvents();
-    }, []);
+    }, [authUser]);
 
     const handleOpenModal = (evento?: Evento) => {
         if (evento) {
             setEditingEvent(evento);
             reset(evento);
         } else {
+            if (!authUser?.empresa.id) return;
             setEditingEvent(null);
             reset({
-                empresa_id: 101,
+                empresa_id: authUser.empresa.id,
                 titulo: "",
                 data_evento: "",
                 descricao: ""
@@ -57,38 +63,52 @@ const EventsPage = () => {
 
     const onSubmit = async (data: Evento) => {
         try {
-            await eventsService.saveEvent(data);
+            if (!authUser?.empresa.id) return;
+            
+            // Garantir empresa_id
+            const payload = {
+                ...data,
+                empresa_id: authUser.empresa.id
+            };
+            
+            await eventsService.saveEvent(payload);
             await loadEvents();
             handleCloseModal();
         } catch (e) {
             console.error("Erro ao salvar evento", e);
+            alert("Erro ao salvar evento.");
         }
     };
 
     const handleDelete = async (id: number) => {
         if (confirm("Tem certeza que deseja remover este evento?")) {
-            await eventsService.deleteEvent(id);
-            await loadEvents();
+            try {
+                await eventsService.deleteEvent(id);
+                await loadEvents();
+            } catch (e) {
+                alert("Erro ao excluir evento.");
+            }
         }
     };
 
-    // Helper para formatar data
+    // Helper para formatar data para exibição
     const getDayAndMonth = (dateString: string) => {
-        const date = new Date(dateString);
-        // Ajuste fuso horário básico para exibição correta do dia
-        const userTimezoneOffset = date.getTimezoneOffset() * 60000;
-        const adjustedDate = new Date(date.getTime() + userTimezoneOffset);
+        if (!dateString) return { day: '--', month: '--', year: '----' };
+        
+        // Criar data considerando timezone local para evitar problemas de dia anterior
+        const [yearStr, monthStr, dayStr] = dateString.split('-');
+        const date = new Date(Number(yearStr), Number(monthStr) - 1, Number(dayStr));
         
         return {
-            day: adjustedDate.getDate(),
-            month: adjustedDate.toLocaleString('pt-BR', { month: 'short' }).toUpperCase(),
-            year: adjustedDate.getFullYear()
+            day: date.getDate(),
+            month: date.toLocaleString('pt-BR', { month: 'short' }).toUpperCase(),
+            year: date.getFullYear()
         };
     };
 
     return (
         <DashboardLayout>
-            <div className="max-w-5xl mx-auto">
+            <div className="max-w-5xl mx-auto pb-20">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
                     <div>
                         <h1 className="text-3xl font-display font-bold text-white mb-2 flex items-center gap-3">
@@ -157,7 +177,7 @@ const EventsPage = () => {
                                                         <Edit2 size={16} />
                                                     </button>
                                                     <button 
-                                                        onClick={() => handleDelete(event.id!)}
+                                                        onClick={() => event.id && handleDelete(event.id)}
                                                         className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
                                                         title="Excluir"
                                                     >
@@ -169,7 +189,7 @@ const EventsPage = () => {
                                     );
                                 })
                             ) : (
-                                <div className="col-span-2 text-center py-20 border border-dashed border-gray-800 rounded-2xl">
+                                <div className="col-span-2 text-center py-20 border border-dashed border-gray-800 rounded-2xl bg-dark/30">
                                     <div className="w-16 h-16 bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-4 text-gray-600">
                                         <PartyPopper size={32} />
                                     </div>

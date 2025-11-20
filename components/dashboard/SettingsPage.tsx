@@ -5,8 +5,9 @@ import React, { useEffect, useState } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { motion } from 'framer-motion';
 import DashboardLayout from './DashboardLayout';
-import { companyService } from '../../services/companyService';
-import { Empresa } from '../../types';
+import { useAuth } from '@/contexts/AuthContext';
+import { createClient } from '@/lib/supabase/client';
+import { Empresa as EmpresaType } from '@/lib/supabase/types';
 import { 
   Loader2, Save, Store, Wifi, Cpu, Lock, 
   Smartphone, MessageSquare, Image as ImageIcon,
@@ -14,48 +15,85 @@ import {
 } from 'lucide-react';
 
 const SettingsPage = () => {
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const { authUser, refreshUserData } = useAuth();
+  const supabase = createClient();
   
-  const { register, handleSubmit, setValue, watch, control, formState: { errors } } = useForm<Empresa>();
+  const { register, handleSubmit, setValue, watch, control, formState: { errors } } = useForm<EmpresaType>();
 
   // Observar a cor para o preview em tempo real
   const currentColor = watch('cor');
 
+  // Carregar dados da empresa do contexto
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        const data = await companyService.getCompany();
-        
-        // Populate form
-        Object.keys(data).forEach((key) => {
-          // @ts-ignore
-          setValue(key, data[key]);
-        });
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    loadData();
-  }, [setValue]);
+    if (authUser?.empresa) {
+      const empresa = authUser.empresa;
+      
+      // Populate form com dados reais
+      Object.keys(empresa).forEach((key) => {
+        // @ts-ignore
+        setValue(key, empresa[key]);
+      });
+    }
+  }, [authUser, setValue]);
 
-  const onSubmit = async (data: Empresa) => {
+  const onSubmit = async (data: EmpresaType) => {
+    if (!authUser?.empresa.id) return;
+    
     setIsSaving(true);
     try {
-      await companyService.updateCompany(data);
-      alert("Dados da empresa atualizados com sucesso!");
-    } catch (error) {
-      console.error(error);
-      alert("Erro ao salvar dados.");
+      const { error } = await supabase
+        .from('empresa')
+        .update({
+          razaoSocial: data.razaoSocial,
+          fantasia: data.fantasia,
+          contatoPrincipal: data.contatoPrincipal,
+          logo: data.logo,
+          cor: data.cor,
+          senhaWiFi: data.senhaWiFi,
+          LimiteDeReservasPorDia: data.LimiteDeReservasPorDia,
+          LimiteDeConvidadosPorReserva: data.LimiteDeConvidadosPorReserva,
+          contatoSoReserva: data.contatoSoReserva,
+          respostas_prontas: data.respostas_prontas,
+          contato_respostas: data.contato_respostas,
+          contato_vagas_de_emprego: data.contato_vagas_de_emprego,
+          contato_fornecedores: data.contato_fornecedores,
+          api_provider: data.api_provider,
+          modo_ia: data.modo_ia,
+          prompt: data.prompt,
+          em_teste: data.em_teste,
+          modificadoDia: new Date().toISOString()
+        })
+        .eq('id', authUser.empresa.id);
+
+      if (error) throw error;
+
+      // Atualizar dados no contexto
+      await refreshUserData();
+      
+      alert("✅ Dados da empresa atualizados com sucesso!");
+    } catch (error: any) {
+      console.error('Erro ao salvar:', error);
+      alert("❌ Erro ao salvar dados: " + error.message);
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleChangePassword = async () => {
-    if (confirm("Um email de redefinição será enviado para o administrador. Confirmar?")) {
-      await companyService.changePassword();
-      alert("Email enviado!");
+    if (confirm("Um email de redefinição será enviado para você. Confirmar?")) {
+      try {
+        const { error } = await supabase.auth.resetPasswordForEmail(
+          authUser?.profile.email || '',
+          { redirectTo: `${window.location.origin}/reset-password` }
+        );
+        
+        if (error) throw error;
+        alert("✅ Email enviado! Verifique sua caixa de entrada.");
+      } catch (error: any) {
+        alert("❌ Erro ao enviar email: " + error.message);
+      }
     }
   };
 

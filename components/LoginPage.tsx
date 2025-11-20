@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useForm } from 'react-hook-form';
-import { Link, useNavigate } from 'react-router-dom';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Lock, Mail, ArrowLeft, AlertCircle, Loader2, Bot } from 'lucide-react';
-import { authService } from '../services/authService';
+import { useAuth } from '@/contexts/AuthContext';
+import { SupabaseConnectionTest } from './SupabaseConnectionTest';
 
 type LoginFormData = {
   email: string;
@@ -16,37 +18,80 @@ const LoginPage = () => {
   const { register, handleSubmit, formState: { errors } } = useForm<LoginFormData>();
   const [isLoading, setIsLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
-  const navigate = useNavigate();
+  const router = useRouter();
+  const { signIn, user, authUser, loading } = useAuth();
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Redirecionar se já estiver logado E tiver dados completos
+  useEffect(() => {
+    console.log('🔍 [LOGIN_PAGE] Estado:', { loading, hasUser: !!user, hasAuthUser: !!authUser });
+    
+    if (!loading && user && authUser) {
+      console.log('✅ [LOGIN_PAGE] Usuário autenticado com dados completos, redirecionando...');
+      console.log('📊 [LOGIN_PAGE] Dados:', {
+        userId: user.id,
+        profileId: authUser.profile.id,
+        empresaId: authUser.empresa.id
+      });
+      setIsLoading(false); // Parar loading antes de redirecionar
+      router.push('/dashboard');
+    } else if (!loading && user && !authUser) {
+      console.warn('⚠️ [LOGIN_PAGE] Usuário autenticado mas sem dados completos. Aguardando...');
+    }
+  }, [user, authUser, loading, router]);
 
   const onSubmit = async (data: LoginFormData) => {
+    // Limpar timeout anterior se existir
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+
     setIsLoading(true);
     setLoginError(null);
 
     try {
-      // Permite qualquer login se não estiver vazio para fins de demonstração
-      // Mas tenta usar o serviço mockado
-      const response = await authService.login(data.email, data.password);
+      console.log('📝 [LOGIN_PAGE] Iniciando processo de login...');
+      const { error } = await signIn(data.email, data.password);
       
-      // BYPASS: Para garantir que o usuário veja o dashboard mesmo se errar a senha mockada
-      // Remova este bloco if(true) quando conectar com supabase real
-      if (true) { 
-         console.log("Login bypass for demo");
-         navigate('/dashboard');
-         return;
+      if (error) {
+        console.error('❌ [LOGIN_PAGE] Erro retornado do signIn:', error);
+        setLoginError(error);
+        setIsLoading(false);
+      } else {
+        console.log('✅ [LOGIN_PAGE] SignIn retornou sucesso. O useEffect vai detectar quando authUser estiver pronto.');
+        // Timeout de segurança: se após 20 segundos não tiver authUser, mostrar erro
+        timeoutRef.current = setTimeout(() => {
+          console.error('⏱️ [LOGIN_PAGE] Timeout: authUser não foi setado após 20 segundos');
+          setLoginError('Timeout ao carregar dados do usuário. Verifique o console para mais detalhes.');
+          setIsLoading(false);
+          timeoutRef.current = null;
+        }, 20000);
       }
-
-      if (response.error) {
-        setLoginError(response.error);
-      } else if (response.user) {
-        navigate('/dashboard'); 
-      }
-    } catch (e) {
-        // Fallback para demo
-        navigate('/dashboard');
-    } finally {
+    } catch (e: any) {
+      console.error('💥 [LOGIN_PAGE] Exceção no onSubmit:', e);
+      setLoginError(e.message || 'Erro ao fazer login');
       setIsLoading(false);
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
+      }
     }
   };
+
+  // Limpar timeout quando componente desmontar ou quando authUser for setado
+  useEffect(() => {
+    if (authUser && timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+    }
+  };
+  }, [authUser]);
 
   return (
     <div className="min-h-screen bg-dark flex items-center justify-center relative overflow-hidden p-4">
@@ -61,7 +106,7 @@ const LoginPage = () => {
         className="w-full max-w-md relative z-10"
       >
         <div className="mb-8 text-center">
-            <Link to="/" className="inline-flex items-center gap-2 text-gray-400 hover:text-white transition-colors mb-8 text-sm">
+            <Link href="/" className="inline-flex items-center gap-2 text-gray-400 hover:text-white transition-colors mb-8 text-sm">
                 <ArrowLeft size={16} /> Voltar para o site
             </Link>
             <div className="flex justify-center mb-4">
@@ -94,7 +139,7 @@ const LoginPage = () => {
                             {...register("email", { required: true })}
                             type="email"
                             className="w-full bg-dark border border-gray-700 rounded-xl pl-12 pr-4 py-3 text-white focus:border-electric focus:ring-1 focus:ring-electric outline-none transition-all placeholder:text-gray-600"
-                            placeholder="qualquer@email.com"
+                            placeholder="seu@email.com"
                         />
                     </div>
                     {errors.email && <span className="text-red-400 text-xs">Email é obrigatório</span>}
@@ -108,7 +153,7 @@ const LoginPage = () => {
                             {...register("password", { required: true })}
                             type="password"
                             className="w-full bg-dark border border-gray-700 rounded-xl pl-12 pr-4 py-3 text-white focus:border-electric focus:ring-1 focus:ring-electric outline-none transition-all placeholder:text-gray-600"
-                            placeholder="qualquer senha"
+                            placeholder="sua senha"
                         />
                     </div>
                     {errors.password && <span className="text-red-400 text-xs">Senha é obrigatória</span>}
@@ -124,7 +169,7 @@ const LoginPage = () => {
                             <Loader2 className="w-5 h-5 animate-spin" /> Acessando...
                         </>
                     ) : (
-                        "Entrar no Sistema (Demo)"
+                        "Entrar no Sistema"
                     )}
                 </button>
             </form>
@@ -141,6 +186,9 @@ const LoginPage = () => {
             © 2024 Pastel apps. Todos os direitos reservados.
         </div>
       </motion.div>
+
+      {/* Debug Tool */}
+      <SupabaseConnectionTest />
     </div>
   );
 };

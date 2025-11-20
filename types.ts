@@ -1,5 +1,4 @@
 
-
 import { LucideIcon } from 'lucide-react';
 
 export interface Testimonial {
@@ -81,6 +80,7 @@ export interface Reserva {
   status?: 'confirmada' | 'pendente' | 'cancelada' | 'finalizada'; // Derived from other booleans for UI logic
   mesa: string | null;
   created_at?: string;
+  cliente_uuid?: string;
 }
 
 export interface CreateReservationPayload {
@@ -169,18 +169,27 @@ export interface PublicReservationData {
 
 // --- Regras de Reserva ---
 
-export interface LimitesPorPeriodo {
-  [key: string]: number; // ex: { "almoco": 50, "jantar": 100 }
+export interface PeriodoLimiteDB {
+  nome_periodo: string;
+  limite_convidados: number;
 }
 
 export interface ReservationRules {
   id: number;
   empresa_id: number;
-  dias_semana_indisponiveis: number[]; // 0=Sun, 6=Sat
-  horario_limite_reserva_mesmo_dia: string; // "HH:mm"
+  dias_semana_indisponiveis: number[]; // 1=Dom, 2=Seg, ..., 7=Sab
+  horario_limite_reserva_mesmo_dia: string; // "HH:mm:ss"
   limite_minimo_pessoas_reserva: number;
   limite_maximo_pessoas_reserva: number;
-  limites_por_periodo: LimitesPorPeriodo; // JSONB
+  limites_por_periodo: PeriodoLimiteDB[]; // JSONB Array from DB
+}
+
+// Interface auxiliar para o Formulário (UI)
+export interface ReservationRulesForm extends Omit<ReservationRules, 'limites_por_periodo'> {
+  limites_por_periodo: {
+    almoco: number;
+    jantar: number;
+  };
 }
 
 // --- Períodos de Funcionamento ---

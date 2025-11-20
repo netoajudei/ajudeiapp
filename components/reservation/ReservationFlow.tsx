@@ -1,9 +1,12 @@
+"use client";
+
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { publicService } from '../../services/publicService';
+import { supabaseReservationService } from '../../services/supabaseReservationService';
+import { reservationApiService } from '../../services/reservationApiService';
 import { Empresa, Cliente } from '../../types';
-import { Loader2, Calendar, Users, Clock, User, Check, ChevronRight, Cake, MessageSquare, Minus, Plus, Sparkles } from 'lucide-react';
+import { Loader2, Calendar, Users, Clock, User, Check, ChevronRight, Cake, MessageSquare, Minus, Plus, Sparkles, AlertTriangle } from 'lucide-react';
 
 // Helper for calendar generation
 const generateCalendarDays = (year: number, month: number) => {
@@ -32,34 +35,81 @@ const generateCalendarDays = (year: number, month: number) => {
     return days;
 };
 
-const ReservationFlow = () => {
-    const { uuid } = useParams<{ uuid: string }>();
-    const navigate = useNavigate();
+interface ReservationFlowProps {
+    uuid: string;
+    initialData?: {
+        empresa: Empresa;
+        cliente: Cliente;
+    };
+}
+
+const ReservationFlow = ({ uuid, initialData }: ReservationFlowProps) => {
 
     // Data State
-    const [isLoading, setIsLoading] = useState(true);
-    const [empresa, setEmpresa] = useState<Empresa | null>(null);
-    const [cliente, setCliente] = useState<Cliente | null>(null);
+    const [isLoading, setIsLoading] = useState(!initialData);
+    const [empresa, setEmpresa] = useState<Empresa | null>(initialData?.empresa || null);
+    const [cliente, setCliente] = useState<Cliente | null>(initialData?.cliente || null);
     const [error, setError] = useState<string | null>(null);
 
     // Flow State: 0=Splash, 1=SelectDate, 2=Details, 3=Processing, 4=Success
-    const [step, setStep] = useState(0);
+    const [step, setStep] = useState(initialData ? 1 : 0);
 
     // Form State
     const [selectedDate, setSelectedDate] = useState<Date | null>(null);
     const [guestCount, setGuestCount] = useState<string>("");
     const [period, setPeriod] = useState<string>("");
     const [validatingAvailability, setValidatingAvailability] = useState(false);
+    const [unavailabilityError, setUnavailabilityError] = useState<string | null>(null);
 
     // Details State
     const [childrenCount, setChildrenCount] = useState(0);
-    const [reservationName, setReservationName] = useState("");
+    const [reservationName, setReservationName] = useState(initialData?.cliente?.nome || "");
     const [observations, setObservations] = useState("");
     const [isBirthday, setIsBirthday] = useState(false);
 
+    // Debug Log for Theme
+    useEffect(() => {
+        if (empresa) {
+            console.log('🎨 [ReservationFlow] Tema carregado:', {
+                cor: empresa.cor,
+                logo: empresa.logo,
+                fantasia: empresa.fantasia
+            });
+        }
+    }, [empresa]);
+
+    // Sincronizar estado com initialData se mudar (ex: recarregamento do pai)
+    useEffect(() => {
+        if (initialData?.empresa) {
+            console.log('🔄 [ReservationFlow] Atualizando empresa via initialData:', initialData.empresa.fantasia);
+            setEmpresa(initialData.empresa);
+        }
+        if (initialData?.cliente) {
+            console.log('🔄 [ReservationFlow] Atualizando cliente via initialData:', initialData.cliente.nome);
+            setCliente(initialData.cliente);
+            if (!reservationName) {
+                setReservationName(initialData.cliente.nome || "");
+            }
+        }
+        // Se tivermos dados suficientes e estivermos no step 0, avançar
+        if (initialData?.empresa && step === 0) {
+             setStep(1);
+             setIsLoading(false);
+        }
+    }, [initialData]);
+
     useEffect(() => {
         const loadData = async () => {
-            if (!uuid) return;
+            // Se já temos os dados iniciais via props (e eles são válidos), não buscamos novamente
+            if (initialData?.empresa) {
+                return;
+            }
+
+            if (!uuid) {
+                setError("Link de reserva inválido ou expirado.");
+                setIsLoading(false);
+                return;
+            }
             try {
                 const data = await publicService.getDataByUuid(uuid);
                 setEmpresa(data.empresa);
@@ -73,27 +123,88 @@ const ReservationFlow = () => {
             }
         };
         loadData();
-    }, [uuid]);
+    }, [uuid, initialData]);
 
-    // Chain Reactions
+    // Chain Reactions - Validation
     useEffect(() => {
-        if (selectedDate && guestCount && period) {
-            // Validate availability simulation
+        if (selectedDate && guestCount && period && (cliente || initialData?.cliente)) {
+            const clientToUse = cliente || initialData?.cliente;
+            
+            // Validate availability via RPC
             const validate = async () => {
                 setValidatingAvailability(true);
-                await new Promise(r => setTimeout(r, 1200)); // Fake API check
-                setValidatingAvailability(false);
-                setStep(2); // Go to details
+                try {
+                    // Converter data local para string YYYY-MM-DD sem conversão de fuso
+                    const year = selectedDate.getFullYear();
+                    const month = String(selectedDate.getMonth() + 1).padStart(2, '0');
+                    const day = String(selectedDate.getDate()).padStart(2, '0');
+                    const dateString = `${year}-${month}-${day}`;
+
+                    const response = await supabaseReservationService.verificarDisponibilidade({
+                        p_cliente_uuid: clientToUse?.uuid_identificador || uuid,
+                        p_data_desejada: dateString,
+                        p_nome_periodo: period,
+                        p_numero_de_pessoas: parseInt(guestCount)
+                    });
+
+                    if (response.disponivel) {
+                         setStep(2); // Go to details
+                    } else {
+                        setUnavailabilityError(response.motivo || "Não há disponibilidade para esta data/horário.");
+                        setPeriod(""); // Reset period to allow selection again
+                    }
+                } catch (err) {
+                    console.error("Erro ao verificar disponibilidade:", err);
+                    // Em caso de erro técnico, talvez permitir passar ou mostrar erro?
+                    // Vamos assumir indisponível por segurança
+                    setUnavailabilityError("Erro ao verificar disponibilidade. Tente novamente.");
+                    setPeriod("");
+                } finally {
+                    setValidatingAvailability(false);
+                }
             };
             validate();
         }
-    }, [period]); // Trigger when period is selected (last step of chain)
+    }, [period, selectedDate, guestCount, cliente, initialData, uuid]);
 
     const handleConfirmReservation = async () => {
-        if (!reservationName) return;
+        if (!reservationName || !selectedDate || !period || !guestCount) return;
+        
         setStep(3); // Processing
-        await publicService.submitReservation({});
-        setStep(4); // Success
+
+        try {
+            const clientToUse = cliente || initialData?.cliente;
+            const clienteUuid = clientToUse?.uuid_identificador || uuid;
+
+            // Formatar data para YYYY-MM-DD
+            const year = selectedDate.getFullYear();
+            const month = String(selectedDate.getMonth() + 1).padStart(2, '0');
+            const day = String(selectedDate.getDate()).padStart(2, '0');
+            const dateString = `${year}-${month}-${day}`;
+
+            const payload = {
+                nome: reservationName,
+                adultos: parseInt(guestCount),
+                data_reserva: dateString,
+                horario: period, // "A noite" ou "Almoço"
+                criancas: childrenCount,
+                observacoes: observations,
+                cliente_uuid: clienteUuid,
+                aniversario: isBirthday
+            };
+
+            const result = await reservationApiService.criarReservaLink(payload);
+
+            if (result.success) {
+                 setStep(4); // Success
+            } else {
+                throw new Error(result.error || "Erro ao criar reserva.");
+            }
+        } catch (error: any) {
+            console.error("Erro ao criar reserva:", error);
+            setError(error.message || "Não foi possível confirmar a reserva. Tente novamente.");
+            setStep(2); // Volta para detalhes
+        }
     };
 
     const today = new Date();
@@ -110,9 +221,12 @@ const ReservationFlow = () => {
                     transition={{ duration: 0.5, repeat: Infinity, repeatType: "reverse" }}
                     className="mb-8"
                 >
-                   {/* Generic loader if logo not yet loaded, else logo */}
-                   <div className="w-24 h-24 bg-gray-100 rounded-full flex items-center justify-center shadow-xl">
-                      <Loader2 className="w-10 h-10 text-gray-300 animate-spin" />
+                   <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center shadow-xl border border-gray-100 overflow-hidden">
+                      {empresa?.logo ? (
+                         <img src={empresa.logo} alt="Logo" className="w-full h-full object-contain p-2" />
+                      ) : (
+                         <Loader2 className="w-10 h-10 text-blue-500 animate-spin" />
+                      )}
                    </div>
                 </motion.div>
                 <h2 className="text-gray-400 text-sm font-medium tracking-widest uppercase">Carregando Reserva</h2>
@@ -131,7 +245,9 @@ const ReservationFlow = () => {
     }
 
     // Dynamic Theme Color
-    const themeColor = empresa.cor;
+    const themeColor = empresa?.cor || '#3B82F6';
+    
+    console.log('🎨 [ReservationFlow] Renderizando com cor:', themeColor, 'Empresa:', empresa?.fantasia);
 
     return (
         <div className="min-h-screen bg-white text-gray-800 font-sans overflow-x-hidden selection:bg-gray-200">
@@ -252,8 +368,8 @@ const ReservationFlow = () => {
                                             style={{ '--tw-ring-color': themeColor } as React.CSSProperties}
                                         >
                                             <option value="" disabled>Selecione...</option>
-                                            <option value="almoco">Almoço (12h - 15h)</option>
-                                            <option value="jantar">Jantar (19h - 23h)</option>
+                                            <option value="Almoço">Almoço (12h - 15h)</option>
+                                            <option value="A noite">Jantar (19h - 23h)</option>
                                         </select>
                                     </motion.section>
                                 )}
@@ -286,7 +402,7 @@ const ReservationFlow = () => {
                                 <div>
                                     <p className="text-xs text-gray-400 uppercase font-bold mb-1">Data Selecionada</p>
                                     <p className="font-bold text-gray-800">
-                                        {selectedDate?.toLocaleDateString('pt-BR')} • {period === 'almoco' ? 'Almoço' : 'Jantar'}
+                                        {selectedDate?.toLocaleDateString('pt-BR')} • {period}
                                     </p>
                                 </div>
                                 <button 
@@ -446,7 +562,7 @@ const ReservationFlow = () => {
                                     </div>
                                     <div>
                                         <p className="text-xs text-gray-400 uppercase font-bold">Horário</p>
-                                        <p className="font-bold text-gray-800">{period === 'almoco' ? 'Almoço' : 'Jantar'}</p>
+                                        <p className="font-bold text-gray-800">{period === 'Almoço' ? 'Almoço' : 'Jantar'}</p>
                                     </div>
                                     <div>
                                         <p className="text-xs text-gray-400 uppercase font-bold">Pessoas</p>
@@ -461,6 +577,35 @@ const ReservationFlow = () => {
 
                             <p className="text-xs text-gray-400 mt-4">Você pode fechar esta janela.</p>
                         </motion.div>
+                    )}
+                </AnimatePresence>
+
+                {/* Unavailability Dialog */}
+                <AnimatePresence>
+                    {unavailabilityError && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                            <motion.div 
+                                initial={{ scale: 0.9, opacity: 0 }}
+                                animate={{ scale: 1, opacity: 1 }}
+                                exit={{ scale: 0.9, opacity: 0 }}
+                                className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl"
+                            >
+                                <div className="w-16 h-16 rounded-full bg-red-50 text-red-500 flex items-center justify-center mb-4 mx-auto border-4 border-red-100">
+                                    <AlertTriangle size={32} />
+                                </div>
+                                <h3 className="text-xl font-bold text-gray-900 text-center mb-2">Ops! Indisponível</h3>
+                                <p className="text-gray-500 text-center text-sm mb-6 px-2">
+                                    {unavailabilityError}
+                                </p>
+                                
+                                <button 
+                                    onClick={() => setUnavailabilityError(null)}
+                                    className="w-full py-3 rounded-xl font-bold text-white bg-gray-900 hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
+                                >
+                                    Tentar Outra Data
+                                </button>
+                            </motion.div>
+                        </div>
                     )}
                 </AnimatePresence>
             </main>
