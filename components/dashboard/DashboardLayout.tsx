@@ -21,7 +21,8 @@ import {
   Clock,
   PartyPopper,
   PlusCircle,
-  BarChart3
+  BarChart3,
+  LucideIcon
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import NewReservationModal from './NewReservationModal';
@@ -31,7 +32,7 @@ interface DashboardLayoutProps {
 }
 
 interface SidebarItemProps {
-  icon: React.ComponentType<{ size?: number }>;
+  icon: LucideIcon;
   label: string;
   path: string;
   isActive: boolean;
