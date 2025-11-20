@@ -225,7 +225,7 @@ const ReservationDetailsPage = ({ reservationId }: ReservationDetailsPageProps) 
 
       const apiResult = await reservationApiService.gerenciarReservaLink({
         cliente_uuid: clienteUuid,
-        confirmar_dia_reserva: acaoApi
+        acao: acaoApi
       });
 
       if (!apiResult.success) {
