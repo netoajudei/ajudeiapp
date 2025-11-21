@@ -216,16 +216,18 @@ const ReservationDetailsPage = ({ reservationId }: ReservationDetailsPageProps) 
       // Chamar API externa
       // Se confirmar -> "confirmar_dia_reserva"
       // Se cancelar -> "cancelar"
-      const acaoApi = pendingAction === 'confirmar' ? 'confirmar_dia_reserva' : 'cancelar';
+      
+
+const acaoApi = pendingAction === 'confirmar' ? 'confirmar_dia_reserva' : 'cancelar';
 
 console.log('📤 [ReservationDetails] Enviando para API:', {
   cliente_uuid: clienteUuid,
-  acao: acaoApi  // ✅ Usar a variável acaoApi que tem o valor correto
+  acao: acaoApi
 });
 
 const apiResult = await reservationApiService.gerenciarReservaLink({
   cliente_uuid: clienteUuid,
-  acao: acaoApi  // ✅ Usar a variável acaoApi, não confirmar_dia_reserva nem cancelar
+  acao: acaoApi  // ✅ Nome da propriedade é "acao", valor é acaoApi
 });
 
 if (!apiResult.success) {
@@ -233,6 +235,9 @@ if (!apiResult.success) {
 }
 
 console.log('✅ [ReservationDetails] API chamada com sucesso:', apiResult);
+
+
+      
       // Atualizar status no Supabase também
       const confirmada = pendingAction === 'confirmar';
       const cancelada = pendingAction === 'cancelar';
