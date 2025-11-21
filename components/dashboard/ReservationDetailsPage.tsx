@@ -1,4 +1,4 @@
-
+r
 "use client";
 
 import React, { useEffect, useState } from 'react';
@@ -218,22 +218,21 @@ const ReservationDetailsPage = ({ reservationId }: ReservationDetailsPageProps) 
       // Se cancelar -> "cancelar"
       const acaoApi = pendingAction === 'confirmar' ? 'confirmar_dia_reserva' : 'cancelar';
 
-      console.log('📤 [ReservationDetails] Enviando para API:', {
-        cliente_uuid: clienteUuid,
-        acao: acaoApi
-      });
+console.log('📤 [ReservationDetails] Enviando para API:', {
+  cliente_uuid: clienteUuid,
+  acao: acaoApi  // ✅ Usar a variável acaoApi que tem o valor correto
+});
 
-      const apiResult = await reservationApiService.gerenciarReservaLink({
-        cliente_uuid: clienteUuid,
-        acao: confirmar_dia_reserva
-      });
+const apiResult = await reservationApiService.gerenciarReservaLink({
+  cliente_uuid: clienteUuid,
+  acao: acaoApi  // ✅ Usar a variável acaoApi, não confirmar_dia_reserva nem cancelar
+});
 
-      if (!apiResult.success) {
-        throw new Error(apiResult.error || 'Erro ao processar ação na API');
-      }
+if (!apiResult.success) {
+  throw new Error(apiResult.error || 'Erro ao processar ação na API');
+}
 
-      console.log('✅ [ReservationDetails] API chamada com sucesso:', apiResult);
-
+console.log('✅ [ReservationDetails] API chamada com sucesso:', apiResult);
       // Atualizar status no Supabase também
       const confirmada = pendingAction === 'confirmar';
       const cancelada = pendingAction === 'cancelar';
