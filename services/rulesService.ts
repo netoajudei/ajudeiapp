@@ -8,10 +8,16 @@ const MOCK_RULES: ReservationRules = {
   horario_limite_reserva_mesmo_dia: "18:00",
   limite_minimo_pessoas_reserva: 2,
   limite_maximo_pessoas_reserva: 20,
-  limites_por_periodo: {
-    "almoco": 40,
-    "jantar": 80
-  }
+  limites_por_periodo: [
+    {
+      nome_periodo: "Almoço",
+      limite_convidados: 40
+    },
+    {
+      nome_periodo: "A noite",
+      limite_convidados: 80
+    }
+  ]
 };
 
 export const rulesService = {
