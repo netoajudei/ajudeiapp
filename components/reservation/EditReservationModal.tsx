@@ -16,7 +16,7 @@ interface EditReservationModalProps {
 }
 
 // Helper for calendar generation
-const generateCalendarDays = (year: number, month: number) => {
+const generateCalendarDays = (year: number, month: number, earliestAllowed: Date) => {
     const date = new Date(year, month, 1);
     const days = [];
     const firstDayIndex = date.getDay();
@@ -26,14 +26,11 @@ const generateCalendarDays = (year: number, month: number) => {
         days.push({ day: null, active: false });
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
     for (let i = 1; i <= lastDay; i++) {
         const currentDate = new Date(year, month, i);
         days.push({
             day: i,
-            active: currentDate >= today,
+            active: currentDate >= earliestAllowed,
             date: currentDate
         });
     }
@@ -87,7 +84,9 @@ export const EditReservationModal = ({
 
   if (!isOpen) return null;
 
-  const currentMonthDays = generateCalendarDays(calendarMonth.getFullYear(), calendarMonth.getMonth());
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const currentMonthDays = generateCalendarDays(calendarMonth.getFullYear(), calendarMonth.getMonth(), today);
 
   const handlePrevMonth = () => {
     const newDate = new Date(calendarMonth);

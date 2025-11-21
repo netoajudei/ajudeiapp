@@ -9,7 +9,7 @@ import { Empresa, Cliente } from '../../types';
 import { Loader2, Calendar, Users, Clock, User, Check, ChevronRight, Cake, MessageSquare, Minus, Plus, Sparkles, AlertTriangle } from 'lucide-react';
 
 // Helper for calendar generation
-const generateCalendarDays = (year: number, month: number) => {
+const generateCalendarDays = (year: number, month: number, earliestAllowed: Date) => {
     const date = new Date(year, month, 1);
     const days = [];
     const firstDayIndex = date.getDay();
@@ -21,14 +21,11 @@ const generateCalendarDays = (year: number, month: number) => {
     }
 
     // Current month days
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
     for (let i = 1; i <= lastDay; i++) {
         const currentDate = new Date(year, month, i);
         days.push({
             day: i,
-            active: currentDate >= today,
+            active: currentDate >= earliestAllowed,
             date: currentDate
         });
     }
@@ -66,6 +63,21 @@ const ReservationFlow = ({ uuid, initialData }: ReservationFlowProps) => {
     const [reservationName, setReservationName] = useState(initialData?.cliente?.nome || "");
     const [observations, setObservations] = useState("");
     const [isBirthday, setIsBirthday] = useState(false);
+
+    const todayBase = new Date();
+    todayBase.setHours(0, 0, 0, 0);
+    const [displayMonth, setDisplayMonth] = useState(todayBase.getMonth());
+    const [displayYear, setDisplayYear] = useState(todayBase.getFullYear());
+
+    const handleNextMonth = () => {
+        setDisplayMonth((prevMonth) => {
+            if (prevMonth === 11) {
+                setDisplayYear((prevYear) => prevYear + 1);
+                return 0;
+            }
+            return prevMonth + 1;
+        });
+    };
 
     // Debug Log for Theme
     useEffect(() => {
@@ -208,7 +220,8 @@ const ReservationFlow = ({ uuid, initialData }: ReservationFlowProps) => {
     };
 
     const today = new Date();
-    const currentMonthDays = generateCalendarDays(today.getFullYear(), today.getMonth());
+    today.setHours(0, 0, 0, 0);
+    const displayMonthDays = generateCalendarDays(displayYear, displayMonth, today);
     const monthNames = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 
     // Loading Splash
@@ -292,16 +305,23 @@ const ReservationFlow = ({ uuid, initialData }: ReservationFlowProps) => {
                                     Escolha uma data
                                 </h2>
                                 <div className="bg-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-gray-100 p-6">
-                                    <div className="text-center mb-6">
-                                        <span className="text-gray-900 font-bold text-lg capitalize">
-                                            {monthNames[today.getMonth()]} {today.getFullYear()}
-                                        </span>
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div className="text-gray-900 font-bold text-lg capitalize">
+                                            {monthNames[displayMonth]} {displayYear}
+                                        </div>
+                                        <button
+                                            onClick={handleNextMonth}
+                                            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-full border border-gray-200 bg-white shadow-sm hover:bg-gray-50 transition"
+                                        >
+                                            Próximo mês
+                                            <ChevronRight className="w-4 h-4" />
+                                        </button>
                                     </div>
                                     <div className="grid grid-cols-7 gap-2 text-center text-xs font-medium text-gray-400 mb-2">
                                         <div>D</div><div>S</div><div>T</div><div>Q</div><div>Q</div><div>S</div><div>S</div>
                                     </div>
                                     <div className="grid grid-cols-7 gap-2">
-                                        {currentMonthDays.map((d, i) => (
+                                        {displayMonthDays.map((d, i) => (
                                             <button
                                                 key={i}
                                                 disabled={!d.active}
