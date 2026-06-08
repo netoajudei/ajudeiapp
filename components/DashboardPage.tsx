@@ -89,7 +89,7 @@ const DashboardPage = () => {
         uuid_identificador: clientes.uuid_identificador // Incluir UUID do cliente
       },
       telefone: chatIdLimpo, // Telefone já limpo
-      data_nascimento: clientes.data_nascimento
+      data_nascimento: clientes.aniversario
     };
   };
 
@@ -331,21 +331,15 @@ const DashboardPage = () => {
 
   const handleSaveTable = async (tableName: string) => {
       if (!selectedReservaForTable) return;
-      
-      // Call service (assuming reservationService is used for updating table, but it seems to be supabaseReservationService or undefined here,
-      // previously user had reservationService.updateTable, let's assume supabaseReservationService has updateReservaTable logic or similar.
-      // Checking previous files, supabaseReservationService has updateReservaMesa? Not seen.
-      // I will use supabaseReservationService to update table if possible, or just reload for now as logic wasn't requested to be fixed here.)
-      
-      // Placeholder for updating table:
-      console.log("Updating table", tableName, "for reservation", selectedReservaForTable.id);
-      // await supabaseReservationService.updateReservaMesa(selectedReservaForTable.id, tableName); // Hypothetical
-      
-      // Close modal
+
+      try {
+        await supabaseReservationService.updateReservaMesa(selectedReservaForTable.id, tableName);
+      } catch (error) {
+        console.error('Erro ao atualizar mesa:', error);
+      }
+
       setTableModalOpen(false);
       setSelectedReservaForTable(null);
-      
-      // Refresh data
       refreshCurrentView();
   };
 

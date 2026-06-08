@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from './DashboardLayout';
 import { ConfirmReservationDialog } from './ConfirmReservationDialog';
 import { SuccessDialog } from './SuccessDialog';
@@ -11,11 +11,17 @@ import { reservationApiService } from '../../services/reservationApiService';
 import { useAuth } from '@/contexts/AuthContext';
 import { useReservation } from '@/contexts/ReservationContext';
 import { Reserva } from '../../types';
-import { 
-  Loader2, ArrowLeft, Phone, Calendar, Clock, Users, 
-  MessageSquare, CheckCircle2, XCircle, MessageCircle, 
-  Cake, MapPin
+import {
+  Loader2, ArrowLeft, Phone, Calendar, Clock, Users,
+  MessageSquare, CheckCircle2, XCircle, MessageCircle,
+  Cake, MapPin, Send
 } from 'lucide-react';
+import ChatDrawer from './ChatDrawer';
+
+const parseLocalDate = (dateStr: string) => {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d);
+};
 
 interface ReservationDetailsPageProps {
   reservationId: string;
@@ -25,6 +31,7 @@ interface ReservationDetailsPageProps {
 interface ExtendedReserva extends Reserva {
   telefone?: string;
   data_nascimento?: string;
+  clientes_id?: number;
   clientes?: {
     nome?: string;
     chatId?: string;
@@ -47,6 +54,11 @@ const ReservationDetailsPage = ({ reservationId }: ReservationDetailsPageProps) 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [successDialogOpen, setSuccessDialogOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<'confirmar' | 'cancelar' | null>(null);
+  const [customMessage, setCustomMessage] = useState('');
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [messageFeedback, setMessageFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [whatsappPanelOpen, setWhatsappPanelOpen] = useState(false);
+  const [chatDrawerOpen, setChatDrawerOpen] = useState(false);
 
   // Função helper para limpar chatId (remover @lid e @c.us)
   const cleanChatId = (chatId: string | null | undefined): string => {
@@ -79,6 +91,7 @@ const ReservationDetailsPage = ({ reservationId }: ReservationDetailsPageProps) 
     return {
       id: reservaData.id,
       empresa_id: reservaData.empresa_id,
+      clientes_id: reservaData.clientes_id,
       nome: reservaData.nome || 'Cliente',
       data_reserva: reservaData.data_reserva,
       horario: reservaData.horario,
@@ -91,9 +104,8 @@ const ReservationDetailsPage = ({ reservationId }: ReservationDetailsPageProps) 
       mesa: reservaData.mesa,
       status: status,
       created_at: reservaData.created_at,
-      telefone: cleanChatId(clientes.chatId || reservaData.chat_id || reservaData.telefone), // Usar chatId do cliente ou chat_id da reserva ou telefone já mapeado (limpo)
-      data_nascimento: clientes.data_nascimento || reservaData.data_nascimento,
-      // Incluir dados completos do cliente incluindo uuid_identificador
+      telefone: cleanChatId(clientes.chatId || reservaData.chat_id || reservaData.telefone),
+      data_nascimento: clientes.aniversario || reservaData.data_nascimento,
       clientes: {
         ...clientes,
         uuid_identificador: clientes.uuid_identificador || reservaData.clientes?.uuid_identificador
@@ -269,12 +281,46 @@ console.log('✅ [ReservationDetails] API chamada com sucesso:', apiResult);
     }
   };
 
-  const handleWhatsApp = () => {
-    if (!reserva?.telefone) return;
-    // O telefone já está limpo (sem @lid e @c.us), só remover caracteres não numéricos
-    const cleanPhone = reserva.telefone.replace(/\D/g, '');
-    const message = `Olá ${reserva.nome.split(' ')[0]}, aqui é do restaurante. Sobre sua reserva para hoje às ${reserva.horario}...`;
-    window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`, '_blank');
+
+  const handleSendWhatsApp = async (message: string) => {
+    if (!message.trim()) return;
+
+    setIsSendingMessage(true);
+    setMessageFeedback(null);
+
+    try {
+      // Usar clientes_id direto ou buscar pelo telefone como fallback
+      let clienteId = reserva.clientes_id ?? null;
+
+      if (!clienteId && reserva.telefone && reserva.empresa_id) {
+        clienteId = await supabaseReservationService.getClienteIdByTelefone(
+          reserva.telefone,
+          reserva.empresa_id
+        );
+      }
+
+      if (!clienteId) {
+        setMessageFeedback({ type: 'error', text: 'Não foi possível identificar o cliente pelo telefone cadastrado.' });
+        return;
+      }
+
+      const result = await reservationApiService.sendWhatsAppMessage({
+        cliente_id: clienteId,
+        message: message.trim()
+      });
+
+      if (result.success) {
+        setMessageFeedback({ type: 'success', text: 'Mensagem enviada com sucesso!' });
+        setCustomMessage('');
+      } else {
+        setMessageFeedback({ type: 'error', text: result.error || 'Erro ao enviar mensagem.' });
+      }
+    } catch (e: any) {
+      setMessageFeedback({ type: 'error', text: e.message || 'Erro inesperado.' });
+    } finally {
+      setIsSendingMessage(false);
+      setTimeout(() => setMessageFeedback(null), 5000);
+    }
   };
 
   if (isLoading) {
@@ -352,17 +398,35 @@ console.log('✅ [ReservationDetails] API chamada com sucesso:', apiResult);
                 {reserva.aniversario && (
                    <div className="w-full bg-pink-500/10 border border-pink-500/20 rounded-xl p-3 mb-6 flex items-center justify-center gap-2 text-pink-400 text-sm">
                       <Cake size={16} /> Aniversariante
-                      {reserva.data_nascimento && <span className="text-xs opacity-70">({new Date(reserva.data_nascimento).toLocaleDateString('pt-BR').slice(0,5)})</span>}
+                      {reserva.data_nascimento && <span className="text-xs opacity-70">({parseLocalDate(reserva.data_nascimento).toLocaleDateString('pt-BR').slice(0,5)})</span>}
                    </div>
                 )}
 
-                <button 
-                  onClick={handleWhatsApp}
-                  className="w-full bg-[#25D366] hover:bg-[#20bd5a] text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-green-900/20"
+                <button
+                  onClick={() => {
+                    console.log('🟢 BOTÃO ABRIR CHAT CLICADO', {
+                      chatDrawerOpen,
+                      clienteId: reserva?.clientes_id,
+                      empresaId: reserva?.empresa_id,
+                      telefone: reserva?.telefone,
+                      nome: reserva?.nome,
+                      chatId: reserva?.clientes?.chatId
+                    });
+                    setChatDrawerOpen(true);
+                  }}
+                  className="w-full bg-electric hover:bg-electric/90 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-electric/20"
                 >
-                   <MessageCircle size={20} />
-                   WhatsApp
+                  <MessageSquare size={20} />
+                  Abrir Chat
                 </button>
+                <button
+                  onClick={() => setWhatsappPanelOpen(true)}
+                  className="w-full mt-2 bg-dark border border-gray-700 hover:bg-white/5 text-gray-300 py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all text-sm"
+                >
+                  <Send size={16} />
+                  Mensagem Rapida
+                </button>
+
              </motion.div>
 
              {/* Stats Placeholder */}
@@ -397,7 +461,7 @@ console.log('✅ [ReservationDetails] API chamada com sucesso:', apiResult);
                    <div>
                       <label className="block text-xs font-medium text-gray-500 uppercase mb-2 flex items-center gap-2"><Calendar size={14}/> Data</label>
                       <div className="text-xl text-white font-medium">
-                         {new Date(reserva.data_reserva).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
+                         {parseLocalDate(reserva.data_reserva as string).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
                       </div>
                    </div>
                    <div>
@@ -477,6 +541,7 @@ console.log('✅ [ReservationDetails] API chamada com sucesso:', apiResult);
                  )}
 
              </motion.div>
+
           </div>
 
         </div>
@@ -499,11 +564,90 @@ console.log('✅ [ReservationDetails] API chamada com sucesso:', apiResult);
         isOpen={successDialogOpen}
         onClose={() => {
           setSuccessDialogOpen(false);
-          setPendingAction(null); // Limpar ação quando fechar o diálogo
-          router.back(); // Navegar de volta para a página anterior
+          setPendingAction(null);
+          router.back();
         }}
         action={pendingAction || 'confirmar'}
       />
+
+      {/* Modal WhatsApp */}
+      <AnimatePresence>
+        {whatsappPanelOpen && reserva && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => { setWhatsappPanelOpen(false); setCustomMessage(''); setMessageFeedback(null); }}
+              className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            >
+              <div className="bg-[#1A2025] border border-gray-700 rounded-2xl w-full max-w-md shadow-2xl">
+                {/* Header */}
+                <div className="px-6 py-4 border-b border-gray-700 flex items-center justify-between bg-[#151a1f] rounded-t-2xl">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <MessageCircle size={18} className="text-[#25D366]" />
+                    Enviar Mensagem WhatsApp
+                  </h3>
+                  <button
+                    onClick={() => { setWhatsappPanelOpen(false); setCustomMessage(''); setMessageFeedback(null); }}
+                    className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors"
+                  >
+                    <XCircle size={20} />
+                  </button>
+                </div>
+
+                {/* Body */}
+                <div className="p-6 space-y-4">
+                  <textarea
+                    autoFocus
+                    value={customMessage}
+                    onChange={(e) => setCustomMessage(e.target.value)}
+                    rows={4}
+                    placeholder="Digite a mensagem para o cliente..."
+                    className="w-full bg-dark border border-gray-700 rounded-xl px-4 py-3 text-white text-sm focus:border-[#25D366]/60 outline-none resize-none placeholder-gray-600"
+                  />
+
+                  <button
+                    onClick={() => handleSendWhatsApp(customMessage)}
+                    disabled={isSendingMessage || !customMessage.trim()}
+                    className="w-full bg-[#25D366] hover:bg-[#20bd5a] disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all"
+                  >
+                    {isSendingMessage ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
+                    {isSendingMessage ? 'Enviando...' : 'Enviar'}
+                  </button>
+
+                  {messageFeedback && (
+                    <div className={`text-sm px-4 py-3 rounded-xl flex items-center gap-2 ${
+                      messageFeedback.type === 'success'
+                        ? 'bg-green-500/10 border border-green-500/20 text-green-400'
+                        : 'bg-red-500/10 border border-red-500/20 text-red-400'
+                    }`}>
+                      {messageFeedback.type === 'success' ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
+                      {messageFeedback.text}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Chat Drawer */}
+      <ChatDrawer
+        isOpen={chatDrawerOpen}
+        onClose={() => setChatDrawerOpen(false)}
+        clienteId={reserva?.clientes_id || 0}
+        chatId={reserva?.clientes?.chatId || reserva?.telefone || ''}
+        empresaId={reserva?.empresa_id || 0}
+        nome={reserva?.nome || ''}
+        telefone={reserva?.telefone}
+      />
+
     </DashboardLayout>
   );
 };

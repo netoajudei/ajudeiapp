@@ -2,9 +2,10 @@
  * Serviço para chamar Edge Functions do Supabase relacionadas a reservas
  */
 
-const EDGE_FUNCTION_URL = 'https://ctsvfluufyfhkqlonqio.supabase.co/functions/v1/gerenciar-reserva-link';
-const CREATE_RESERVATION_URL = 'https://ctsvfluufyfhkqlonqio.supabase.co/functions/v1/criar-reserva-link';
-const EDIT_RESERVATION_URL = 'https://ctsvfluufyfhkqlonqio.supabase.co/functions/v1/solicitar-edicao-reserva-link';
+const SUPABASE_BASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/$/, '');
+const EDGE_FUNCTION_URL = `${SUPABASE_BASE_URL}/functions/v1/gerenciar-reserva-link`;
+const CREATE_RESERVATION_URL = `${SUPABASE_BASE_URL}/functions/v1/criar-reserva-link`;
+const EDIT_RESERVATION_URL = `${SUPABASE_BASE_URL}/functions/v1/solicitar-edicao-reserva-link`;
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
 export interface GerenciarReservaRequest {
@@ -53,14 +54,51 @@ export interface EditarReservaResponse {
   data?: any;
 }
 
+const SEND_WHATSAPP_URL = `${SUPABASE_BASE_URL}/functions/v1/send-whatsapp-gateway`;
+
+export interface SendWhatsAppRequest {
+  cliente_id: number;
+  message: string;
+}
+
+export interface SendWhatsAppResponse {
+  success: boolean;
+  provider?: string;
+  error?: string;
+}
+
 export const reservationApiService = {
+  /**
+   * Envia mensagem WhatsApp via gateway para um cliente pelo ID numérico
+   */
+  async sendWhatsAppMessage(data: SendWhatsAppRequest): Promise<SendWhatsAppResponse> {
+    try {
+      const response = await fetch(SEND_WHATSAPP_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify(data),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        return { success: false, error: result.error || `Erro HTTP: ${response.status}` };
+      }
+
+      return { success: true, provider: result.provider };
+    } catch (error: any) {
+      console.error('[reservationApiService] sendWhatsAppMessage:', error);
+      return { success: false, error: error.message || 'Erro de conexão' };
+    }
+  },
   /**
    * Chama a Edge Function do Supabase para gerenciar reserva (confirmar ou cancelar)
    */
   async gerenciarReservaLink(data: GerenciarReservaRequest): Promise<GerenciarReservaResponse> {
     try {
-      console.log('🚀 [API] Chamando Edge Function (Gerenciar):', EDGE_FUNCTION_URL, data);
-
       const response = await fetch(EDGE_FUNCTION_URL, {
         method: 'POST',
         headers: {
@@ -76,14 +114,12 @@ export const reservationApiService = {
       }
 
       const result = await response.json();
-      console.log('✅ [API] Resposta recebida (Gerenciar):', result);
-
       return {
         success: true,
         ...result
       };
     } catch (error: any) {
-      console.error('❌ [API] Erro ao chamar Edge Function (Gerenciar):', error);
+      console.error('[reservationApiService] gerenciarReservaLink:', error);
       return {
         success: false,
         error: error.message || 'Erro ao processar requisição'
@@ -96,8 +132,6 @@ export const reservationApiService = {
    */
   async criarReservaLink(data: CriarReservaRequest): Promise<CriarReservaResponse> {
     try {
-      console.log('🚀 [API] Chamando Edge Function (Criar):', CREATE_RESERVATION_URL, data);
-
       const response = await fetch(CREATE_RESERVATION_URL, {
         method: 'POST',
         headers: {
@@ -113,14 +147,12 @@ export const reservationApiService = {
       }
 
       const result = await response.json();
-      console.log('✅ [API] Resposta recebida (Criar):', result);
-
       return {
         success: true,
         ...result
       };
     } catch (error: any) {
-      console.error('❌ [API] Erro ao chamar Edge Function (Criar):', error);
+      console.error('[reservationApiService] criarReservaLink:', error);
       return {
         success: false,
         error: error.message || 'Erro ao processar requisição'
@@ -133,8 +165,6 @@ export const reservationApiService = {
    */
   async solicitarEdicaoReservaLink(data: EditarReservaRequest): Promise<EditarReservaResponse> {
     try {
-      console.log('🚀 [API] Chamando Edge Function (Editar):', EDIT_RESERVATION_URL, data);
-
       const response = await fetch(EDIT_RESERVATION_URL, {
         method: 'POST',
         headers: {
@@ -150,14 +180,12 @@ export const reservationApiService = {
       }
 
       const result = await response.json();
-      console.log('✅ [API] Resposta recebida (Editar):', result);
-
       return {
         success: true,
         ...result
       };
     } catch (error: any) {
-      console.error('❌ [API] Erro ao chamar Edge Function (Editar):', error);
+      console.error('[reservationApiService] solicitarEdicaoReservaLink:', error);
       return {
         success: false,
         error: error.message || 'Erro ao processar requisição'

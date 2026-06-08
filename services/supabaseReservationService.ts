@@ -1,6 +1,9 @@
 import { createClient } from '@/lib/supabase/client';
 import { ResumoReservaDiaria } from '@/lib/supabase/types';
 
+const toLocalDateStr = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
 export const supabaseReservationService = {
   /**
    * Busca o resumo de reservas por data e empresa
@@ -36,7 +39,7 @@ export const supabaseReservationService = {
    * Busca o resumo para hoje
    */
   async getResumoHoje(empresaId: number) {
-    const hoje = new Date().toISOString().split('T')[0];
+    const hoje = toLocalDateStr(new Date());
     return this.getResumoReservasDiarias(empresaId, hoje, hoje);
   },
 
@@ -50,8 +53,8 @@ export const supabaseReservationService = {
 
     return this.getResumoReservasDiarias(
       empresaId,
-      hoje.toISOString().split('T')[0],
-      daquiA30Dias.toISOString().split('T')[0]
+      toLocalDateStr(hoje),
+      toLocalDateStr(daquiA30Dias)
     );
   },
 
@@ -70,6 +73,7 @@ export const supabaseReservationService = {
           chatId,
           foto,
           aniversario,
+          telefone,
           uuid_identificador
         )
       `)
@@ -90,7 +94,7 @@ export const supabaseReservationService = {
    */
   async getReservasHoje(empresaId: number) {
     const supabase = createClient();
-    const hoje = new Date().toISOString().split('T')[0];
+    const hoje = toLocalDateStr(new Date());
 
     const { data: reservas, error } = await supabase
       .from('reservas')
@@ -101,6 +105,7 @@ export const supabaseReservationService = {
           chatId,
           foto,
           aniversario,
+          telefone,
           uuid_identificador
         )
       `)
@@ -160,7 +165,6 @@ export const supabaseReservationService = {
           foto,
           aniversario,
           telefone,
-          data_nascimento,
           uuid_identificador
         )
       `)
@@ -221,6 +225,24 @@ export const supabaseReservationService = {
     }
 
     return data;
+  },
+
+  /**
+   * Busca o ID numérico de um cliente pelo número de telefone (chatId)
+   */
+  async getClienteIdByTelefone(telefone: string, empresaId: number): Promise<number | null> {
+    const supabase = createClient();
+    const numero = telefone.replace(/\D/g, '');
+
+    const { data } = await supabase
+      .from('clientes')
+      .select('id')
+      .eq('empresa_id', empresaId)
+      .ilike('chatId', `%${numero}%`)
+      .limit(1)
+      .maybeSingle();
+
+    return data?.id ?? null;
   },
 
   /**

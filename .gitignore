@@ -8,9 +8,18 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+.next
 dist
 dist-ssr
 *.local
+.env
+.env.local
+.env.*.local
+
+# Supabase migration artifacts
+backups/
+supabase/.temp/
+supabase/.branches/
 
 # Editor directories and files
 .vscode/*

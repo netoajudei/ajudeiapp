@@ -13,6 +13,7 @@ interface ExtendedReserva extends Reserva {
     aniversario?: boolean;
     telefone?: string;
     data_nascimento?: string;
+    uuid_identificador?: string;
   };
 }
 

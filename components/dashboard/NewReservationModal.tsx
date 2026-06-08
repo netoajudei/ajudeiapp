@@ -32,6 +32,11 @@ interface ReservationFormData {
   isBirthday: boolean;
 }
 
+const localToday = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 const NewReservationModal: React.FC<NewReservationModalProps> = ({ isOpen, onClose }) => {
   const [step, setStep] = useState<Step>('search');
   const [isLoading, setIsLoading] = useState(false);
@@ -44,7 +49,7 @@ const NewReservationModal: React.FC<NewReservationModalProps> = ({ isOpen, onClo
     defaultValues: {
       adults: 2,
       children: 0,
-      date: new Date().toISOString().split('T')[0], // Hoje
+      date: localToday(), // Hoje
       isBirthday: false
     }
   });
@@ -59,7 +64,7 @@ const NewReservationModal: React.FC<NewReservationModalProps> = ({ isOpen, onClo
       reservationForm.reset({
         adults: 2,
         children: 0,
-        date: new Date().toISOString().split('T')[0],
+        date: localToday(),
         isBirthday: false,
         name: "",
         observations: "",

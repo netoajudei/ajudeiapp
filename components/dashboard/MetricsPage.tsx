@@ -9,22 +9,25 @@ import {
 } from 'recharts';
 import { Loader2, TrendingUp, Users, MessageSquare, CalendarCheck, BarChart3 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { useAuth } from '@/contexts/AuthContext';
 
 const MetricsPage = () => {
+  const { authUser } = useAuth();
   const [data, setData] = useState<MetricsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    if (!authUser?.empresa?.id) return;
     const load = async () => {
       try {
-        const result = await metricsService.getMetrics();
+        const result = await metricsService.getMetrics(authUser.empresa.id);
         setData(result);
       } finally {
         setIsLoading(false);
       }
     };
     load();
-  }, []);
+  }, [authUser?.empresa?.id]);
 
   if (isLoading || !data) {
     return (

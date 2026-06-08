@@ -68,6 +68,7 @@ export interface AuthResponse {
 export interface Reserva {
   id: number; // bigint
   empresa_id?: number;
+  clientes_id?: number; // FK → clientes.id (null for anonymous walk-ins)
   nome: string | null;
   data_reserva: string; // date string YYYY-MM-DD
   horario: string | null; // text (ex: "20:00")

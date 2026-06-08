@@ -6,26 +6,26 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  LayoutDashboard, 
-  CalendarDays, 
-  Users, 
-  Settings, 
-  LogOut, 
-  Menu, 
+import {
+  LayoutDashboard,
+  CalendarDays,
+  Users,
+  Settings,
+  LogOut,
+  Menu,
   X,
   Bot,
   ExternalLink,
-  PlayCircle,
   ScrollText,
   Clock,
   PartyPopper,
   PlusCircle,
   BarChart3,
+  MessageSquare,
   LucideIcon
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import NewReservationModal from './NewReservationModal';
+import { ManualReservationModal } from './ManualReservationModal';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -68,7 +68,8 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
   };
 
   const menuItems = [
-    { icon: CalendarDays, label: 'Reservas do Dia', path: '/dashboard' }, // Reservas agora é a home do dashboard
+    { icon: CalendarDays, label: 'Reservas do Dia', path: '/dashboard' },
+    { icon: MessageSquare, label: 'Chat', path: '/dashboard/chat' },
     { icon: BarChart3, label: 'Métricas', path: '/dashboard/metrics' },
     { icon: Users, label: 'Clientes', path: '/dashboard/clientes' },
     { icon: Clock, label: 'Horários', path: '/dashboard/horarios' },
@@ -77,16 +78,13 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
     { icon: Settings, label: 'Configurações', path: '/dashboard/settings' },
   ];
 
-  // UUID de teste fixo do MOCK_CLIENTES no publicService
-  const testUuid = "e5002036-ec86-401a-9741-d3557c823f87"; 
-
   return (
     <div className="min-h-screen bg-dark flex">
       
       {/* Modal de Nova Reserva (Global) */}
-      <NewReservationModal 
-        isOpen={isNewReservationModalOpen} 
-        onClose={() => setIsNewReservationModalOpen(false)} 
+      <ManualReservationModal
+        isOpen={isNewReservationModalOpen}
+        onClose={() => setIsNewReservationModalOpen(false)}
       />
 
       {/* Mobile Overlay */}
@@ -168,18 +166,6 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children }) => {
             />
             );
           })}
-
-          {/* Botão Temporário de Teste */}
-          <div className="mt-8 px-2">
-             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Dev Tools</div>
-             <Link 
-                href={`/reserva/${testUuid}`}
-                className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/5 text-blue-300 hover:bg-white/10 hover:text-blue-200 transition-all border border-blue-500/20"
-             >
-                <PlayCircle size={18} />
-                <span className="text-sm">Simular Reserva</span>
-             </Link>
-          </div>
 
         </div>
 
