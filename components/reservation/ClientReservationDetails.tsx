@@ -59,8 +59,8 @@ export const ClientReservationDetails = ({
   const isConfirmed = reserva.confirmada_dia_reserva === true;
   const isCanceled = reserva.status === 'cancelada' || reserva.cancelada_cliente === true;
 
-  // Formatação de data
-  const dataFormatada = new Date(reserva.data_reserva).toLocaleDateString('pt-BR', {
+  // Formatação de data (usar timeZone UTC para evitar shift de dia)
+  const dataFormatada = new Date(reserva.data_reserva + 'T12:00:00').toLocaleDateString('pt-BR', {
     weekday: 'long',
     day: 'numeric',
     month: 'long'

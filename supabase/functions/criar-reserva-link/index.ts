@@ -27,6 +27,7 @@ serve(async (req)=>{
     }
     const { id: clientes_id, empresa_id, chatId, instancia } = clienteData;
     // 3. Insere a nova reserva no banco de dados, já como confirmada.
+    const instanciaValue = instancia && String(instancia).trim() !== '' ? instancia : null;
     const { data: novaReserva, error: insertError } = await supabaseClient.from('reservas').insert({
       nome,
       data_reserva,
@@ -38,7 +39,7 @@ serve(async (req)=>{
       clientes_id,
       empresa_id,
       chat_id: chatId,
-      instancia,
+      instancia: instanciaValue,
       confirmada: true,
       confirmada_automaticamente: true,
       reserva_anonima: false
