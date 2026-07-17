@@ -20,6 +20,24 @@ function extractAssistantText(resp: any): string {
   return '';
 }
 
+async function fetchOpenAIWithRetry(url: string, options: RequestInit, maxRetries = 5): Promise<Response> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const response = await fetch(url, options);
+    if (response.ok) return response;
+    const body = await response.text();
+    if (body.includes('conversation_locked') && attempt < maxRetries) {
+      const baseDelay = (attempt + 1) * 2000;
+      const jitter = Math.floor(Math.random() * 2000);
+      const delay = baseDelay + jitter;
+      console.warn(`[Retry] conversation_locked. Tentativa ${attempt + 1}/${maxRetries}. Aguardando ${delay}ms...`);
+      await new Promise(r => setTimeout(r, delay));
+      continue;
+    }
+    throw new Error(`Erro OpenAI: ${body}`);
+  }
+  throw new Error('Máximo de tentativas excedido para conversation_locked');
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -36,11 +54,81 @@ serve(async (req) => {
     // =============================================
     const { data: cliente, error: errCliente } = await supabase
       .from('clientes')
-      .select('id, chatId, instancia, conversation_id, empresa_id, mensagemAgregada, uuid_identificador, telefone')
+      .select('id, chatId, instancia, conversation_id, empresa_id, mensagemAgregada, uuid_identificador, telefone, bot_ativo, bot_pausado_ate')
       .eq('id', cliente_id)
       .single();
 
     if (errCliente || !cliente) throw new Error(`Cliente não encontrado: ${errCliente?.message}`);
+
+    // =============================================
+    // CHECK BOT SILENCIADO
+    // =============================================
+    if (cliente.bot_ativo === false) {
+      const agora = new Date();
+      const pausadoAte = cliente.bot_pausado_ate ? new Date(cliente.bot_pausado_ate) : null;
+
+      if (pausadoAte && agora >= pausadoAte) {
+        // Tempo expirou, reativar o bot automaticamente
+        await supabase
+          .from('clientes')
+          .update({ bot_ativo: true, bot_pausado_ate: null })
+          .eq('id', cliente_id);
+        console.log(`Bot reativado automaticamente para cliente ${cliente_id}.`);
+      } else {
+        // Bot ainda silenciado — salvar mensagem no compelition mas NAO processar
+        const mensagem = (cliente.mensagemAgregada || '').trim();
+        if (mensagem) {
+          const dataAtualMsg = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+          const userMsg = { role: 'user', content: `<data>${dataAtualMsg}</data> ${mensagem}` };
+
+          const { data: compExistente } = await supabase
+            .from('compelition')
+            .select('id, chat')
+            .eq('cliente', cliente_id)
+            .eq('empresa', cliente.empresa_id)
+            .order('id', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (compExistente) {
+            await supabase
+              .from('compelition')
+              .update({
+                chat: [...(compExistente.chat || []), userMsg],
+                modificadoEm: new Date().toISOString()
+              })
+              .eq('id', compExistente.id);
+          } else {
+            await supabase
+              .from('compelition')
+              .insert({
+                cliente: cliente_id,
+                empresa: cliente.empresa_id,
+                chat: [userMsg],
+                modificadoEm: new Date().toISOString()
+              });
+          }
+        }
+
+        await supabase
+          .from('clientes')
+          .update({ agendado: false })
+          .eq('id', cliente_id);
+
+        const restante = pausadoAte
+          ? `Reativa em ${pausadoAte.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
+          : 'Silenciado indefinidamente';
+
+        return new Response(JSON.stringify({
+          success: true,
+          silenciado: true,
+          message: `Bot silenciado para este cliente. ${restante}`
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    }
 
     const mensagem = (cliente.mensagemAgregada || '').trim();
     if (!mensagem) throw new Error('Mensagem agregada vazia.');
@@ -98,7 +186,7 @@ INSTRUÇÃO ADICIONAL: O link de reserva exclusivo para este cliente é: ${linkR
     let conversationId = cliente.conversation_id;
 
     if (!conversationId) {
-      const createRes = await fetch('https://api.openai.com/v1/conversations', {
+      const createRes = await fetchOpenAIWithRetry('https://api.openai.com/v1/conversations', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${openaiKey}`,
@@ -106,8 +194,6 @@ INSTRUÇÃO ADICIONAL: O link de reserva exclusivo para este cliente é: ${linkR
         },
         body: JSON.stringify({})
       });
-
-      if (!createRes.ok) throw new Error(`Erro ao criar conversation: ${await createRes.text()}`);
       const convData = await createRes.json();
       conversationId = convData.id;
 
@@ -120,7 +206,7 @@ INSTRUÇÃO ADICIONAL: O link de reserva exclusivo para este cliente é: ${linkR
     // =============================================
     // 6) CHAMAR RESPONSES API
     // =============================================
-    const openaiRes = await fetch('https://api.openai.com/v1/responses', {
+    const openaiRes = await fetchOpenAIWithRetry('https://api.openai.com/v1/responses', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${openaiKey}`,
@@ -139,8 +225,6 @@ INSTRUÇÃO ADICIONAL: O link de reserva exclusivo para este cliente é: ${linkR
         }
       })
     });
-
-    if (!openaiRes.ok) throw new Error(`Erro OpenAI: ${await openaiRes.text()}`);
     const responseData = await openaiRes.json();
 
     // =============================================
@@ -202,7 +286,7 @@ INSTRUÇÃO ADICIONAL: O link de reserva exclusivo para este cliente é: ${linkR
       toolExecuted = functionToCall;
 
       // Submete resultado da tool de volta para a conversation
-      const followUpRes = await fetch('https://api.openai.com/v1/responses', {
+      const followUpRes = await fetchOpenAIWithRetry('https://api.openai.com/v1/responses', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${openaiKey}`,
@@ -225,8 +309,6 @@ INSTRUÇÃO ADICIONAL: O link de reserva exclusivo para este cliente é: ${linkR
           }
         })
       });
-
-      if (!followUpRes.ok) throw new Error(`Erro ao submeter resultado da tool: ${await followUpRes.text()}`);
       const followUpData = await followUpRes.json();
 
       resposta = extractAssistantText(followUpData) || `Função ${functionToCall} executada com sucesso.`;

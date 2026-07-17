@@ -7,6 +7,23 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS"
 };
+async function fetchOpenAIWithRetry(url: string, options: RequestInit, maxRetries = 5): Promise<Response> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const response = await fetch(url, options);
+    if (response.ok) return response;
+    const body = await response.text();
+    if (body.includes('conversation_locked') && attempt < maxRetries) {
+      const baseDelay = (attempt + 1) * 2000;
+      const jitter = Math.floor(Math.random() * 2000);
+      const delay = baseDelay + jitter;
+      console.warn(`[Retry] conversation_locked. Tentativa ${attempt + 1}/${maxRetries}. Aguardando ${delay}ms...`);
+      await new Promise(r => setTimeout(r, delay));
+      continue;
+    }
+    throw new Error(`Erro OpenAI: ${body}`);
+  }
+  throw new Error('Máximo de tentativas excedido para conversation_locked');
+}
 serve(async (req)=>{
   if (req.method === "OPTIONS") {
     return new Response("ok", {
@@ -29,8 +46,22 @@ serve(async (req)=>{
     // ============================================
     // 1) BUSCAR CLIENTE + EMPRESA
     // ============================================
-    const { data: cliente, error: errCliente } = await supabase.from("clientes").select("id, chatId, instancia, conversation_id, empresa_id, mensagemAgregada, empresa(id, em_teste)").eq("id", cliente_id).single();
+    const { data: cliente, error: errCliente } = await supabase.from("clientes").select("id, chatId, instancia, conversation_id, empresa_id, mensagemAgregada, bot_ativo, bot_pausado_ate, empresa(id, em_teste)").eq("id", cliente_id).single();
     if (errCliente || !cliente) throw new Error(`Cliente não encontrado: ${errCliente?.message}`);
+
+    // CHECK BOT SILENCIADO
+    if (cliente.bot_ativo === false) {
+      const agora = new Date();
+      const pausadoAte = cliente.bot_pausado_ate ? new Date(cliente.bot_pausado_ate) : null;
+      if (pausadoAte && agora >= pausadoAte) {
+        await supabase.from('clientes').update({ bot_ativo: true, bot_pausado_ate: null }).eq('id', cliente_id);
+        console.log(`Bot reativado automaticamente para cliente ${cliente_id}.`);
+      } else {
+        await supabase.from('clientes').update({ agendado: false }).eq('id', cliente_id);
+        return new Response(JSON.stringify({ success: true, silenciado: true, message: 'Bot silenciado para este cliente.' }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+    }
+
     const { conversation_id, empresa_id, chatId, instancia } = cliente;
     const em_teste = cliente.empresa?.em_teste ?? null;
     if (isDebugMode) {
@@ -102,7 +133,7 @@ serve(async (req)=>{
     let currentConversationId = conversation_id;
     if (!currentConversationId) {
       if (isDebugMode) console.warn("[Orquestrador] 📝 Criando nova conversation...");
-      const createConvRes = await fetch("https://api.openai.com/v1/conversations", {
+      const createConvRes = await fetchOpenAIWithRetry("https://api.openai.com/v1/conversations", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${openaiKey}`,
@@ -116,7 +147,6 @@ serve(async (req)=>{
           }
         })
       });
-      if (!createConvRes.ok) throw new Error(`Erro ao criar conversation: ${await createConvRes.text()}`);
       const convData = await createConvRes.json();
       currentConversationId = convData.id;
       await supabase.from("clientes").update({
@@ -147,7 +177,7 @@ ${promptRow.prompt}
       input: lastUserInput,
       tools: tools.length > 0 ? tools : undefined
     };
-    const openaiRes = await fetch("https://api.openai.com/v1/responses", {
+    const openaiRes = await fetchOpenAIWithRetry("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${openaiKey}`,
@@ -155,7 +185,6 @@ ${promptRow.prompt}
       },
       body: JSON.stringify(responsesPayload)
     });
-    if (!openaiRes.ok) throw new Error(`Erro OpenAI: ${await openaiRes.text()}`);
     const responseData = await openaiRes.json();
     if (isDebugMode) {
       console.warn(`✅ Response ID: ${responseData.id}`);
@@ -259,7 +288,7 @@ ${promptRow.prompt}
         input: `A ferramenta ${toolCallItem.name} foi executada com sucesso. ${mensagemFixa}. Confirme ao cliente de forma natural e amigável.`,
         tools: tools.length > 0 ? tools : undefined
       };
-      const confirmRes = await fetch("https://api.openai.com/v1/responses", {
+      const confirmRes = await fetchOpenAIWithRetry("https://api.openai.com/v1/responses", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${openaiKey}`,
@@ -267,7 +296,6 @@ ${promptRow.prompt}
         },
         body: JSON.stringify(confirmPayload)
       });
-      if (!confirmRes.ok) throw new Error(`Erro na confirmação: ${await confirmRes.text()}`);
       const confirmData = await confirmRes.json();
       let respostaFinal = extractAssistantText(confirmData) || `✅ ${mensagemFixa}`;
       if (isDebugMode) console.warn(`💬 Resposta final: "${respostaFinal.substring(0, 120)}..."`);

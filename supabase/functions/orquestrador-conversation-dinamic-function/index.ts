@@ -81,6 +81,26 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS"
 };
 // ===========================================================================
+// HELPER: FETCH OPENAI COM RETRY PARA conversation_locked
+// ===========================================================================
+async function fetchOpenAIWithRetry(url: string, options: RequestInit, maxRetries = 5): Promise<Response> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const response = await fetch(url, options);
+    if (response.ok) return response;
+    const body = await response.text();
+    if (body.includes('conversation_locked') && attempt < maxRetries) {
+      const baseDelay = (attempt + 1) * 2000;
+      const jitter = Math.floor(Math.random() * 2000);
+      const delay = baseDelay + jitter;
+      console.warn(`[Retry] conversation_locked. Tentativa ${attempt + 1}/${maxRetries}. Aguardando ${delay}ms...`);
+      await new Promise(r => setTimeout(r, delay));
+      continue;
+    }
+    throw new Error(`Erro OpenAI: ${body}`);
+  }
+  throw new Error('Máximo de tentativas excedido para conversation_locked');
+}
+// ===========================================================================
 // HELPER: EXTRAIR TEXTO DA RESPOSTA
 // ===========================================================================
 /**
@@ -132,7 +152,7 @@ const corsHeaders = {
     tools: tools && tools.length > 0 ? tools : undefined
   };
   console.warn("[finalizarToolCall] 📤 Enviando para OpenAI...");
-  const response = await fetch("https://api.openai.com/v1/responses", {
+  const response = await fetchOpenAIWithRetry("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${openaiKey}`,
@@ -140,10 +160,6 @@ const corsHeaders = {
     },
     body: JSON.stringify(payload)
   });
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Erro ao finalizar tool call: ${errorText}`);
-  }
   const data = await response.json();
   console.warn("[finalizarToolCall] ✅ Tool call finalizado com sucesso");
   console.warn(`   Response ID: ${data.id}`);
@@ -263,7 +279,7 @@ serve(async (req)=>{
     let currentConversationId = conversation_id;
     if (!currentConversationId) {
       if (isDebugMode) console.warn("\n[Orquestrador] 🆕 Criando nova conversation...");
-      const createConvRes = await fetch("https://api.openai.com/v1/conversations", {
+      const createConvRes = await fetchOpenAIWithRetry("https://api.openai.com/v1/conversations", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${openaiKey}`,
@@ -277,9 +293,6 @@ serve(async (req)=>{
           }
         })
       });
-      if (!createConvRes.ok) {
-        throw new Error(`Erro ao criar conversation: ${await createConvRes.text()}`);
-      }
       const convData = await createConvRes.json();
       currentConversationId = convData.id;
       await supabase.from("clientes").update({
@@ -310,7 +323,7 @@ ${promptRow.prompt}
       input: mensagemUsuario,
       tools: tools.length > 0 ? tools : undefined
     };
-    const openaiRes = await fetch("https://api.openai.com/v1/responses", {
+    const openaiRes = await fetchOpenAIWithRetry("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${openaiKey}`,
@@ -318,9 +331,6 @@ ${promptRow.prompt}
       },
       body: JSON.stringify(responsesPayload)
     });
-    if (!openaiRes.ok) {
-      throw new Error(`Erro OpenAI: ${await openaiRes.text()}`);
-    }
     const responseData = await openaiRes.json();
     if (isDebugMode) {
       console.warn(`   ✅ Response ID: ${responseData.id}`);

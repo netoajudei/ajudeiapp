@@ -67,6 +67,11 @@ serve(async (req)=>{
         messageForTeam = `✅ *Reserva Confirmada (Cliente)*\n\nA reserva em nome de *${reserva.nome}* para o dia ${dataFormatada} foi confirmada pelo cliente.`;
         break;
       case 'confirmar_dia_reserva':
+        // Verificar se hoje é o dia da reserva (timezone São Paulo)
+        const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); // YYYY-MM-DD
+        if (reserva.data_reserva !== hoje) {
+          throw new Error('A confirmação de presença só está disponível no dia da reserva.');
+        }
         updateData = {
           confirmada_dia_reserva: true
         };
