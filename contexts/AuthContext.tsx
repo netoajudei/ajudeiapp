@@ -72,7 +72,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const initializeAuth = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        // Timeout de seguranca: se getSession() travar (ex.: lock preso em
+        // webview/PWA), nao deixa o app eternamente no spinner. onAuthStateChange
+        // ainda dispara depois e popula a sessao real, se existir.
+        const { data: { session } } = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise<{ data: { session: null } }>((resolve) =>
+            setTimeout(() => resolve({ data: { session: null } }), 8000)
+          ),
+        ]);
         if (session?.user) {
           setUser(session.user);
           const userData = await fetchUserData(session.user.id);
