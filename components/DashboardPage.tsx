@@ -14,6 +14,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 type TabMode = 'today' | 'all';
 
+// Formata uma Date como 'YYYY-MM-DD' no fuso LOCAL (evita o shift de dia do toISOString/UTC)
+const toLocalDateStr = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
 const DashboardPage = () => {
   const { authUser } = useAuth();
   const [activeTab, setActiveTab] = useState<TabMode>('today');
@@ -41,6 +45,18 @@ const DashboardPage = () => {
     return chatId.replace(/@lid|@c\.us/g, '').trim();
   };
   
+  // Ordena reservas: confirmadas → pendentes → canceladas, depois por total convidados decrescente
+  const sortReservations = (reservas: any[]): any[] => {
+    const statusOrder: Record<string, number> = { confirmada: 0, pendente: 1, cancelada: 2 };
+    return [...reservas].sort((a, b) => {
+      const statusDiff = (statusOrder[a.status] ?? 1) - (statusOrder[b.status] ?? 1);
+      if (statusDiff !== 0) return statusDiff;
+      const guestsA = (a.adultos || 0) + (a.criancas || 0);
+      const guestsB = (b.adultos || 0) + (b.criancas || 0);
+      return guestsB - guestsA;
+    });
+  };
+
   // Helper para converter dados do Supabase para o formato esperado
   const mapReservaFromSupabase = (reserva: any): any => {
     const clientes = reserva.clientes || {};
@@ -95,7 +111,7 @@ const DashboardPage = () => {
 
   // Helper para converter resumo da view para DateSummary
   const mapResumoToDateSummary = (resumo: any): DateSummary => {
-    const dateStr = resumo.date || new Date().toISOString().split('T')[0];
+    const dateStr = resumo.date || toLocalDateStr(new Date());
     const date = new Date(dateStr + 'T00:00:00'); // Adicionar hora para evitar problemas de timezone
     const weekdays = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
     const weekday = weekdays[date.getDay()];
@@ -133,8 +149,8 @@ const DashboardPage = () => {
     setIsLoading(true);
     try {
       const empresaId = authUser.empresa.id;
-      const hoje = new Date().toISOString().split('T')[0];
-      
+      const hoje = toLocalDateStr(new Date());
+
       console.log('📊 [loadInitialData] Buscando resumo de hoje para empresa:', empresaId, 'Data:', hoje);
 
       // Buscar resumo de hoje da view
@@ -146,10 +162,9 @@ const DashboardPage = () => {
       const reservasHoje = await supabaseReservationService.getReservasHoje(empresaId);
       console.log('✅ [loadInitialData] Reservas de hoje recebidas:', reservasHoje.length, 'reservas');
 
-      // Mapear reservas
-      const reservasMapeadas = reservasHoje.map(mapReservaFromSupabase);
+      // Mapear e ordenar reservas
+      const reservasMapeadas = sortReservations(reservasHoje.map(mapReservaFromSupabase));
       console.log('🔄 [loadInitialData] Reservas mapeadas:', reservasMapeadas.length);
-      console.log('📝 [loadInitialData] Exemplo de reserva mapeada:', reservasMapeadas[0]);
       setTodayReservations(reservasMapeadas);
 
       // Pegar primeiro resumo de hoje para o summary (se existir)
@@ -194,7 +209,6 @@ const DashboardPage = () => {
       const empresaId = authUser.empresa.id;
       
       // Buscar resumos dos próximos 30 dias (excluindo hoje)
-      const hoje = new Date().toISOString().split('T')[0];
       const amanha = new Date();
       amanha.setDate(amanha.getDate() + 1);
       const daquiA30Dias = new Date();
@@ -202,8 +216,8 @@ const DashboardPage = () => {
 
       const resumos = await supabaseReservationService.getResumoReservasDiarias(
         empresaId,
-        amanha.toISOString().split('T')[0],
-        daquiA30Dias.toISOString().split('T')[0]
+        toLocalDateStr(amanha),
+        toLocalDateStr(daquiA30Dias)
       );
 
       // Converter para DateSummary e agrupar por data+período
@@ -260,7 +274,7 @@ const DashboardPage = () => {
       console.log('📋 [loadDetailedReservations] Buscando reservas para empresa:', empresaId, 'Data:', date);
       const reservas = await supabaseReservationService.getReservasDetalhadas(empresaId, date);
       console.log('✅ [loadDetailedReservations] Reservas recebidas:', reservas.length);
-      const reservasMapeadas = reservas.map(mapReservaFromSupabase);
+      const reservasMapeadas = sortReservations(reservas.map(mapReservaFromSupabase));
       setDetailedReservations(reservasMapeadas);
       console.log('✅ [loadDetailedReservations] Reservas mapeadas e setadas');
     } catch (error) {
