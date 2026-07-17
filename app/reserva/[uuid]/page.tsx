@@ -7,7 +7,10 @@ import { publicService } from '@/services/publicService';
 import { supabaseReservationService } from '@/services/supabaseReservationService';
 import ReservationFlow from '@/components/reservation/ReservationFlow';
 import { ClientReservationDetails } from '@/components/reservation/ClientReservationDetails';
-import { Empresa, Cliente } from '@/types';
+import { Empresa, Cliente, PublicReservationData } from '@/types';
+
+type PublicEmpresa = PublicReservationData['empresa'];
+type PublicCliente = PublicReservationData['cliente'];
 
 interface ReservationFlowPageProps {
   params: {
@@ -17,13 +20,13 @@ interface ReservationFlowPageProps {
 
 export default function ReservationFlowPage({ params }: ReservationFlowPageProps) {
   const { uuid } = params;
-  
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
+
   // Data
-  const [empresa, setEmpresa] = useState<Empresa | null>(null);
-  const [cliente, setCliente] = useState<Cliente | null>(null);
+  const [empresa, setEmpresa] = useState<PublicEmpresa | null>(null);
+  const [cliente, setCliente] = useState<PublicCliente | null>(null);
   const [activeReservation, setActiveReservation] = useState<any | null>(null);
 
   const loadData = useCallback(async () => {

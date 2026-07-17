@@ -211,65 +211,39 @@ const ReservationDetailsPage = ({ reservationId }: ReservationDetailsPageProps) 
     setDialogOpen(false);
 
     try {
-      // Obter uuid_identificador do cliente
-      const clienteUuid = reserva.clientes?.uuid_identificador;
-      
-      if (!clienteUuid) {
-        throw new Error('UUID do cliente não encontrado. Não é possível processar a ação.');
-      }
-
-      console.log('🔄 [ReservationDetails] Processando ação:', {
-        acao: pendingAction,
-        clienteUuid,
-        reservaId: reserva.id
-      });
-
-      // Chamar API externa
-      // Se confirmar -> "confirmar_dia_reserva"
-      // Se cancelar -> "cancelar"
-      
-
-const acaoApi = pendingAction === 'confirmar' ? 'confirmar_dia_reserva' : 'cancelar';
-
-console.log('📤 [ReservationDetails] Enviando para API:', {
-  cliente_uuid: clienteUuid,
-  acao: acaoApi
-});
-
-const apiResult = await reservationApiService.gerenciarReservaLink({
-  cliente_uuid: clienteUuid,
-  acao: acaoApi  // ✅ Nome da propriedade é "acao", valor é acaoApi
-});
-
-if (!apiResult.success) {
-  throw new Error(apiResult.error || 'Erro ao processar ação na API');
-}
-
-console.log('✅ [ReservationDetails] API chamada com sucesso:', apiResult);
-
-
-      
-      // Atualizar status no Supabase também
+      // 1. Atualizar status direto no banco
       const confirmada = pendingAction === 'confirmar';
       const cancelada = pendingAction === 'cancelar';
-      
+
       await supabaseReservationService.updateReservaStatus(reserva.id, confirmada, cancelada);
-      
-      // Atualizar estado localmente sem buscar do servidor
+      console.log('✅ [ReservationDetails] Status atualizado no banco');
+
+      // 2. Notificar cliente via WhatsApp (se tiver cliente vinculado)
+      const clienteId = reserva.clientes_id || null;
+      if (clienteId) {
+        try {
+          const dataFmt = new Date(reserva.data_reserva + 'T12:00:00').toLocaleDateString('pt-BR');
+          const msg = cancelada
+            ? `❌ *Reserva Cancelada*\n\nOlá, ${reserva.nome}!\nSua reserva para o dia ${dataFmt} foi cancelada.\n\nSentimos muito e esperamos vê-lo em breve!`
+            : `✅ *Presença Confirmada*\n\nOlá, ${reserva.nome}!\nSua presença na reserva para ${dataFmt} foi confirmada.\n\nAguardamos você!`;
+
+          await reservationApiService.sendWhatsAppMessage({ cliente_id: clienteId, message: msg });
+          console.log('✅ [ReservationDetails] WhatsApp enviado ao cliente');
+        } catch (whatsErr) {
+          console.warn('⚠️ [ReservationDetails] Falha ao enviar WhatsApp (reserva já atualizada):', whatsErr);
+        }
+      }
+
+      // 3. Atualizar estado localmente
       const reservaAtualizada: ExtendedReserva = {
         ...reserva,
         confirmada_dia_reserva: confirmada,
         status: cancelada ? 'cancelada' : (confirmada ? 'confirmada' : 'pendente')
       };
-      
+
       setReserva(reservaAtualizada);
-      
-      // Atualizar no contexto também
       setSelectedReservation(reservaAtualizada as any);
-      
-      console.log('✅ [ReservationDetails] Status atualizado localmente com sucesso');
-      
-      // Mostrar diálogo de sucesso (não limpar pendingAction aqui, será limpo quando fechar o diálogo)
+
       setSuccessDialogOpen(true);
     } catch (error: any) {
       console.error('❌ [ReservationDetails] Erro ao processar ação:', error);

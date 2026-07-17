@@ -5,10 +5,10 @@ export const publicService = {
   getDataByUuid: async (uuid: string): Promise<PublicReservationData> => {
     const supabase = createClient();
 
-    // 1. Buscar Cliente pelo UUID
+    // 1. Buscar Cliente pelo UUID (só campos necessários)
     const { data: cliente, error: clientError } = await supabase
       .from('clientes')
-      .select('*')
+      .select('id, nome, uuid_identificador, empresa_id')
       .eq('uuid_identificador', uuid)
       .single();
 
@@ -17,10 +17,10 @@ export const publicService = {
       throw new Error("Link inválido ou expirado.");
     }
 
-    // 2. Buscar Empresa vinculada ao Cliente
+    // 2. Buscar Empresa vinculada ao Cliente (só campos públicos)
     const { data: empresa, error: empresaError } = await supabase
       .from('empresa')
-      .select('*')
+      .select('id, fantasia, cor, logo')
       .eq('id', cliente.empresa_id)
       .single();
 

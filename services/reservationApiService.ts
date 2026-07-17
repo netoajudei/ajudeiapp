@@ -54,7 +54,6 @@ export interface EditarReservaResponse {
   data?: any;
 }
 
-const SEND_WHATSAPP_URL = `${SUPABASE_BASE_URL}/functions/v1/send-whatsapp-gateway`;
 
 export interface SendWhatsAppRequest {
   cliente_id: number;
@@ -73,6 +72,7 @@ export const reservationApiService = {
    */
   async sendWhatsAppMessage(data: SendWhatsAppRequest): Promise<SendWhatsAppResponse> {
     try {
+      const SEND_WHATSAPP_URL = `${SUPABASE_BASE_URL}/functions/v1/send-whatsapp-gateway`;
       const response = await fetch(SEND_WHATSAPP_URL, {
         method: 'POST',
         headers: {

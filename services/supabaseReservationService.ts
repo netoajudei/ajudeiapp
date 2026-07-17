@@ -111,7 +111,6 @@ export const supabaseReservationService = {
       `)
       .eq('empresa_id', empresaId)
       .eq('data_reserva', hoje)
-      .eq('confirmada', true)
       .order('horario', { ascending: true });
 
     if (error) {

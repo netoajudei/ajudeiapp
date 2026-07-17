@@ -5,8 +5,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { publicService } from '../../services/publicService';
 import { supabaseReservationService } from '../../services/supabaseReservationService';
 import { reservationApiService } from '../../services/reservationApiService';
-import { Empresa, Cliente } from '../../types';
+import { Empresa, Cliente, PublicReservationData } from '../../types';
 import { Loader2, Calendar, Users, Clock, User, Check, ChevronRight, Cake, MessageSquare, Minus, Plus, Sparkles, AlertTriangle } from 'lucide-react';
+
+type PublicEmpresa = PublicReservationData['empresa'];
+type PublicCliente = PublicReservationData['cliente'];
 
 // Helper for calendar generation
 const generateCalendarDays = (year: number, month: number, earliestAllowed: Date) => {
@@ -35,8 +38,8 @@ const generateCalendarDays = (year: number, month: number, earliestAllowed: Date
 interface ReservationFlowProps {
     uuid: string;
     initialData?: {
-        empresa: Empresa;
-        cliente: Cliente;
+        empresa: PublicEmpresa;
+        cliente: PublicCliente;
     };
 }
 
@@ -44,8 +47,8 @@ const ReservationFlow = ({ uuid, initialData }: ReservationFlowProps) => {
 
     // Data State
     const [isLoading, setIsLoading] = useState(!initialData);
-    const [empresa, setEmpresa] = useState<Empresa | null>(initialData?.empresa || null);
-    const [cliente, setCliente] = useState<Cliente | null>(initialData?.cliente || null);
+    const [empresa, setEmpresa] = useState<PublicEmpresa | null>(initialData?.empresa || null);
+    const [cliente, setCliente] = useState<PublicCliente | null>(initialData?.cliente || null);
     const [error, setError] = useState<string | null>(null);
 
     // Flow State: 0=Splash, 1=SelectDate, 2=Details, 3=Processing, 4=Success

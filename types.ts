@@ -164,8 +164,8 @@ export interface Cliente {
 }
 
 export interface PublicReservationData {
-  empresa: Empresa;
-  cliente: Cliente;
+  empresa: Pick<Empresa, 'id' | 'fantasia' | 'cor' | 'logo'>;
+  cliente: Pick<Cliente, 'id' | 'nome' | 'uuid_identificador' | 'empresa_id'>;
 }
 
 // --- Regras de Reserva ---
