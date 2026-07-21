@@ -20,54 +20,30 @@ export interface Mensagem {
 
 export const chatService = {
   // Lista conversas recentes (compelition por cliente)
+  // Usa a RPC conversas_recentes: a ultima mensagem e extraida no banco, entao
+  // trafega ~5kB em vez de baixar o chat inteiro (JSONB) de 50 conversas (~154kB).
   async getConversas(empresaId: number): Promise<Conversa[]> {
-    console.log('[chatService] getConversas chamado com empresaId:', empresaId);
     const supabase = createClient();
 
-    // Buscar compelitions com chat
-    const { data: compData, error: compError } = await supabase
-      .from('compelition')
-      .select('id, cliente, empresa, chat, modificadoEm')
-      .eq('empresa', empresaId)
-      .not('chat', 'is', null)
-      .order('modificadoEm', { ascending: false })
-      .limit(50);
-
-    console.log('[chatService] compelitions:', { count: compData?.length, error: compError?.message });
-    if (compError) throw compError;
-    if (!compData || compData.length === 0) return [];
-
-    // Buscar clientes associados
-    const clienteIds = [...new Set(compData.map((c: any) => c.cliente).filter(Boolean))];
-    const { data: clientesData, error: clientesError } = await supabase
-      .from('clientes')
-      .select('id, nome, chatId, telefone, instancia')
-      .in('id', clienteIds);
-
-    console.log('[chatService] clientes:', { count: clientesData?.length, error: clientesError?.message });
-    if (clientesError) throw clientesError;
-
-    // Mapear clientes por id
-    const clientesMap = new Map<number, any>();
-    (clientesData || []).forEach((cl: any) => clientesMap.set(cl.id, cl));
-
-    return compData.map((c: any) => {
-      const chat = c.chat || [];
-      const ultima = chat[chat.length - 1];
-      const cl = clientesMap.get(c.cliente);
-      return {
-        compelition_id: c.id,
-        cliente_id: cl?.id || c.cliente,
-        nome: cl?.nome || 'Desconhecido',
-        chatId: cl?.chatId || '',
-        telefone: cl?.telefone || '',
-        empresa_id: empresaId,
-        instancia: cl?.instancia || '',
-        ultima_mensagem: ultima?.content?.replace(/<data>.*?<\/data>\s*/g, '') || '',
-        ultimo_role: ultima?.role || '',
-        modificadoEm: c.modificadoEm || c.created_at || ''
-      };
+    const { data, error } = await supabase.rpc('conversas_recentes', {
+      p_empresa_id: empresaId,
     });
+
+    if (error) throw error;
+    if (!data || data.length === 0) return [];
+
+    return (data as any[]).map((r) => ({
+      compelition_id: r.compelition_id,
+      cliente_id: r.cliente_id,
+      nome: r.nome || 'Desconhecido',
+      chatId: r.chatId || '',
+      telefone: r.telefone || '',
+      empresa_id: empresaId,
+      instancia: r.instancia || '',
+      ultima_mensagem: r.ultima_mensagem || '',
+      ultimo_role: r.ultimo_role || '',
+      modificadoEm: r.modificadoEm || '',
+    }));
   },
 
   // Busca mensagens de uma conversa (compelition.chat)

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { User } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/client';
 import { AuthUser, Profile, Empresa } from '@/lib/supabase/types';
@@ -21,6 +21,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const supabase = createClient();
+  // Guarda o id do usuario ja carregado para evitar rebuscar profile+empresa a
+  // cada evento de auth (TOKEN_REFRESHED, re-foco da aba, etc.).
+  const loadedUserIdRef = useRef<string | null>(null);
 
   const fetchUserData = async (userId: string): Promise<AuthUser> => {
     const withTimeout = <T,>(promise: PromiseLike<T>, ms: number, label: string): Promise<T> =>
@@ -31,10 +34,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ),
       ]);
 
-    const { data: profile, error: profileError } = await withTimeout(
-      supabase.from('profiles').select('*').eq('id', userId).single(),
+    // Uma unica ida ao banco: profile + empresa via embed (FK profiles.empresa_id -> empresa).
+    // Antes eram 2 queries sequenciais; isso reduz pela metade a latencia ate o app
+    // liberar o carregamento das reservas.
+    const { data, error: profileError } = await withTimeout(
+      supabase.from('profiles').select('*, empresa:empresa_id(*)').eq('id', userId).single(),
       10000,
-      'profile'
+      'profile+empresa'
     ) as any;
 
     if (profileError) {
@@ -46,16 +52,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(`Erro ao buscar profile: ${profileError.message}`);
     }
 
-    if (!profile) throw new Error('Profile não existe para este usuário.');
+    if (!data) throw new Error('Profile não existe para este usuário.');
+
+    const { empresa, ...profile } = data as any;
     if (!profile.empresa_id) throw new Error('Usuário sem empresa vinculada. Entre em contato com o administrador.');
-
-    const { data: empresa, error: empresaError } = await withTimeout(
-      supabase.from('empresa').select('*').eq('id', profile.empresa_id).single(),
-      10000,
-      'empresa'
-    ) as any;
-
-    if (empresaError) throw new Error(`Empresa não encontrada: ${empresaError.message}`);
     if (!empresa) throw new Error(`Empresa com ID ${profile.empresa_id} não existe.`);
 
     return { profile: profile as Profile, empresa: empresa as Empresa };
@@ -84,6 +84,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (session?.user) {
           setUser(session.user);
           const userData = await fetchUserData(session.user.id);
+          loadedUserIdRef.current = session.user.id;
           setAuthUser(userData);
         }
       } catch (error) {
@@ -99,13 +100,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(session?.user ?? null);
 
       if (session?.user) {
+        // Ja temos os dados desse usuario? Nao rebusca (evita idas ao banco em
+        // TOKEN_REFRESHED / re-foco da aba).
+        if (loadedUserIdRef.current === session.user.id) {
+          setLoading(false);
+          return;
+        }
         try {
           const userData = await fetchUserData(session.user.id);
+          loadedUserIdRef.current = session.user.id;
           setAuthUser(userData);
         } catch (error) {
           console.error('Erro ao buscar dados do usuário após mudança de auth:', error);
         }
       } else {
+        loadedUserIdRef.current = null;
         setAuthUser(null);
       }
 
